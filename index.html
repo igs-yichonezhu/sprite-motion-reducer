@@ -895,7 +895,7 @@
       statusEl.textContent = "等待選擇影片";
     });
 
-    downloadSheet.addEventListener("click", () => downloadCanvas(sheetCanvas, sheetFileName()));
+    downloadSheet.addEventListener("click", () => downloadCanvas(buildExportSheetCanvas(readSettings()), sheetFileName()));
     downloadJson.addEventListener("click", () => downloadText("unity_timing.json", JSON.stringify(timingData, null, 2), "application/json"));
     downloadReport.addEventListener("click", () => downloadText("keyframe_report.md", reportMarkdown, "text/markdown"));
     deleteSheetFrame.addEventListener("click", deleteSelectedSheetFrame);
@@ -1437,6 +1437,22 @@
       drawSheetPlayback(ctx, settings);
       drawSheetSelection(ctx, settings);
       updateSheetEditButtons();
+    }
+
+    function buildExportSheetCanvas(settings) {
+      const width = settings.cols * settings.width + Math.max(0, settings.cols - 1) * settings.padding;
+      const height = Math.max(1, settings.rows) * settings.height + Math.max(0, Math.max(1, settings.rows) - 1) * settings.padding;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, width, height);
+      selectedFrames.forEach(frame => {
+        const x = frame.sheetX * (settings.width + settings.padding);
+        const y = frame.sheetY * (settings.height + settings.padding);
+        ctx.drawImage(outputCanvasForFrame(frame, settings), x, y, settings.width, settings.height);
+      });
+      return canvas;
     }
 
     function drawSheetCheckbox(ctx, x, y, settings, checked) {
