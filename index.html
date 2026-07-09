@@ -1,0 +1,1724 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sprite Motion Reducer</title>
+  <style>
+    :root {
+      --ink: #171717;
+      --muted: #68645f;
+      --paper: #f7f3ea;
+      --panel: #fffdf7;
+      --line: #d7cec0;
+      --accent: #e13d2f;
+      --accent-2: #106b68;
+      --accent-3: #e2a52e;
+      --shadow: 0 18px 60px rgba(38, 31, 22, .14);
+      --frame-column: 420px;
+      font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(23,23,23,.035) 1px, transparent 1px),
+        linear-gradient(rgba(23,23,23,.035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 28px 28px;
+      overflow: hidden;
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    .shell {
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr) var(--frame-column);
+      overflow: hidden;
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      background: rgba(255, 253, 247, .88);
+      backdrop-filter: blur(14px);
+      padding: 24px;
+      height: 100vh;
+      overflow: auto;
+    }
+
+    main {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+      align-content: start;
+      height: 100vh;
+      overflow-x: hidden;
+      overflow-y: scroll;
+      scrollbar-gutter: stable;
+    }
+
+    main > .panel {
+      grid-column: 1;
+    }
+
+    .preview-pair {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .shell > .frame-panel {
+      border-left: 1px solid var(--line);
+      border-radius: 0;
+      border-top: 0;
+      border-right: 0;
+      border-bottom: 0;
+      box-shadow: none;
+      height: 100vh;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .frame-panel .source-side {
+      flex: 1;
+      min-height: 0;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 30px;
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0 0 22px;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .control {
+      display: grid;
+      gap: 8px;
+      margin: 16px 0;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    input[type="file"],
+    input[type="number"],
+    input[type="text"],
+    select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: white;
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 10px 11px;
+      min-height: 42px;
+    }
+
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent-2);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      padding: 10px;
+      border-radius: 6px;
+      background: white;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      min-height: 42px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 750;
+      color: white;
+      background: var(--ink);
+      transition: transform .16s ease, opacity .16s ease, background .16s ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .45;
+      transform: none;
+    }
+
+    .primary { background: var(--accent); }
+    .secondary { background: var(--accent-2); }
+    .ghost {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: visible;
+    }
+
+    .panel-head {
+      border-radius: 8px 8px 0 0;
+    }
+
+    .panel-head {
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.58);
+    }
+
+    .panel-title {
+      font-weight: 850;
+      font-size: 15px;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .source-side {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .preview-wrap {
+      min-height: 0;
+      height: auto;
+      aspect-ratio: var(--preview-aspect, 16 / 9);
+      display: grid;
+      place-items: center;
+      background: #29251f;
+      background-image:
+        linear-gradient(45deg, rgba(255,255,255,.07) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(255,255,255,.07) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(255,255,255,.07) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.07) 75%);
+      background-size: 24px 24px;
+      background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+      padding: 18px;
+      overflow: hidden;
+    }
+
+    main::-webkit-scrollbar,
+    .timeline::-webkit-scrollbar,
+    aside::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+
+    main::-webkit-scrollbar-track,
+    .timeline::-webkit-scrollbar-track,
+    aside::-webkit-scrollbar-track {
+      background: rgba(23, 23, 23, .08);
+    }
+
+    main::-webkit-scrollbar-thumb,
+    .timeline::-webkit-scrollbar-thumb,
+    aside::-webkit-scrollbar-thumb {
+      background: rgba(16, 107, 104, .55);
+      border: 3px solid rgba(247, 243, 234, .9);
+      border-radius: 999px;
+    }
+
+    video, canvas {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      width: 100%;
+      height: 100%;
+    }
+
+    .source-preview-wrap {
+      --preview-aspect: var(--source-aspect, 16 / 9);
+    }
+
+    .animation-preview-wrap {
+      --preview-aspect: var(--frame-aspect, 1 / 1);
+    }
+
+    .sheet-preview-wrap {
+      --preview-aspect: var(--sheet-aspect, 1 / 1);
+    }
+
+    #sheetCanvas {
+      image-rendering: auto;
+      background: transparent;
+      max-width: 100%;
+      max-height: 100%;
+      cursor: crosshair;
+    }
+
+    #animationCanvas {
+      max-width: 100%;
+      max-height: 100%;
+      background: transparent;
+    }
+
+    .meter {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: white;
+    }
+
+    .metric b {
+      display: block;
+      font-size: 22px;
+      line-height: 1;
+      margin-bottom: 5px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .timeline {
+      padding: 14px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+      max-height: none;
+      border-top: 1px solid var(--line);
+    }
+
+    .thumb {
+      border: 2px solid transparent;
+      border-radius: 6px;
+      background: white;
+      padding: 6px;
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr);
+      align-items: start;
+      justify-items: center;
+      gap: 5px;
+      width: 100%;
+      min-width: 0;
+      text-align: center;
+    }
+
+    .thumb.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(225, 61, 47, .14);
+    }
+
+    .thumb.sheet-active {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 3px rgba(16, 107, 104, .18);
+    }
+
+    .thumb canvas {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      height: auto;
+      display: block;
+      background: #f0ece4;
+      grid-column: 1 / -1;
+    }
+
+    .thumb input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--accent);
+      pointer-events: none;
+    }
+
+    .thumb small {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      overflow-wrap: anywhere;
+      grid-column: 1 / -1;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(255,255,255,.62);
+    }
+
+    .download-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 14px;
+    }
+
+    .playbar {
+      display: grid;
+      grid-template-columns: auto auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-top: 1px solid var(--line);
+      background: rgba(255,255,255,.58);
+    }
+
+    .playbar input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-2);
+    }
+
+    .playbar .frame-readout {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 52px;
+      text-align: right;
+    }
+
+    .note {
+      border-left: 4px solid var(--accent-3);
+      padding: 10px 12px;
+      background: rgba(226, 165, 46, .12);
+      color: #5c4211;
+      font-size: 13px;
+      line-height: 1.5;
+      margin-top: 16px;
+    }
+
+    @media (max-width: 1460px) and (min-width: 1181px) {
+      :root {
+        --frame-column: 360px;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      body {
+        overflow: auto;
+      }
+      .shell {
+        height: auto;
+        min-height: 100vh;
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+      aside {
+        position: static;
+        height: auto;
+      }
+      main {
+        height: auto;
+        overflow: visible;
+        scrollbar-gutter: auto;
+      }
+      .shell > .frame-panel {
+        height: auto;
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      .timeline {
+        height: 620px;
+        min-height: 420px;
+        max-height: 720px;
+        flex: initial;
+      }
+    }
+
+    @media (max-width: 980px) {
+      main > .panel {
+        grid-column: 1;
+      }
+      .preview-pair {
+        grid-template-columns: 1fr;
+      }
+      .stage { grid-template-columns: 1fr; }
+      .timeline {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        height: 520px;
+        min-height: 360px;
+        max-height: 620px;
+        flex: initial;
+      }
+    }
+
+    @media (max-width: 560px) {
+      main, aside { padding: 16px; }
+      .row, .actions, .meter { grid-template-columns: 1fr; }
+      .timeline {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        height: 420px;
+        min-height: 320px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <h1>Sprite Motion Reducer</h1>
+      <p class="subtitle">影片拉入後抽出全 frame，手動勾選需要的格，再匯出 Sprite Sheet 與 timing JSON。</p>
+
+      <div class="control">
+        <label for="fileInput">Input Video</label>
+        <input id="fileInput" type="file" accept="video/*">
+      </div>
+
+      <div class="row">
+        <div class="control">
+          <label for="targetInput">Target Frames</label>
+          <input id="targetInput" type="number" min="1" max="64" value="16">
+        </div>
+        <div class="control">
+          <label for="fpsInput">Sample FPS</label>
+          <input id="fpsInput" type="number" min="1" max="60" value="30">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="control">
+          <label for="colsInput">Sheet Columns</label>
+          <input id="colsInput" type="number" min="1" max="16" value="4">
+        </div>
+        <div class="control">
+          <label for="rowsInput">Sheet Rows Auto</label>
+          <input id="rowsInput" type="number" value="0" readonly>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="control">
+          <label for="widthInput">Frame Width</label>
+          <input id="widthInput" type="number" min="8" max="2048" value="256">
+        </div>
+        <div class="control">
+          <label for="heightInput">Frame Height</label>
+          <input id="heightInput" type="number" min="8" max="2048" value="256">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="control">
+          <label for="paddingInput">Padding</label>
+          <input id="paddingInput" type="number" min="0" max="64" value="0">
+        </div>
+        <div class="control">
+          <label for="distanceInput">Min Distance</label>
+          <input id="distanceInput" type="number" min="0" max="999" value="0">
+        </div>
+      </div>
+
+      <div class="control">
+        <label for="scaleModeInput">Scale Mode</label>
+        <select id="scaleModeInput">
+          <option value="contain" selected>Contain - keep aspect, transparent padding</option>
+          <option value="cover">Cover - keep aspect, crop edges</option>
+          <option value="stretch">Stretch - fill cell</option>
+        </select>
+      </div>
+
+      <div class="note">Animation Preview 與 Sprite Sheet 都來自同一組 Selected Frames。Sheet Columns 只控制輸出排版，Rows 會自動依選取數計算。</div>
+
+      <div class="control">
+        <label for="previewSpeedInput">Preview Speed</label>
+        <input id="previewSpeedInput" type="number" min="0.1" max="8" step="0.1" value="1">
+      </div>
+
+      <div class="control">
+        <label for="previewTimingInput">Preview Timing</label>
+        <select id="previewTimingInput">
+          <option value="smooth" selected>Smooth Loop - constant preview rhythm</option>
+          <option value="timing">Timing JSON - use frame duration</option>
+        </select>
+      </div>
+
+      <div class="control">
+        <label for="lockInput">Locked Frames</label>
+        <input id="lockInput" type="text" placeholder="0,8,15">
+      </div>
+
+      <div class="control">
+        <label for="excludeInput">Excluded Frames</label>
+        <input id="excludeInput" type="text" placeholder="12,13">
+      </div>
+
+      <div class="control">
+        <div class="check">
+          <input id="loopInput" type="checkbox">
+          <label for="loopInput">Loop animation</label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="processButton" class="primary">Extract Frames</button>
+        <button id="clearButton" class="ghost">Clear</button>
+      </div>
+
+      <div class="note">純 HTML 版使用瀏覽器影片解碼；建議輸入 mp4 / webm。GIF 多幀解析在單檔無外部函式庫時不穩定，這版先不列為主要支援。</div>
+    </aside>
+
+    <main>
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Source Preview</div>
+          <div id="status" class="status">等待選擇影片</div>
+        </div>
+        <div class="stage">
+          <div class="preview-wrap source-preview-wrap">
+            <video id="video" controls muted playsinline></video>
+          </div>
+          <div class="source-side">
+            <div class="meter">
+              <div class="metric"><b id="rawCount">0</b><span>Raw Frames</span></div>
+              <div class="metric"><b id="selectedCount">0</b><span>Selected</span></div>
+              <div class="metric"><b id="durationLabel">0ms</b><span>Duration</span></div>
+            </div>
+            <div class="download-bar">
+              <button id="selectAllButton" class="ghost" disabled>Select All</button>
+              <button id="clearSelectionButton" class="ghost" disabled>Clear Selected</button>
+              <button id="autoSuggestButton" class="ghost" disabled>Auto Suggest</button>
+            </div>
+            <div id="timeline" class="timeline"></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="preview-pair">
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Selected Animation Preview</div>
+            <div id="animationInfo" class="status">請先勾選 frame</div>
+          </div>
+          <div class="preview-wrap animation-preview-wrap">
+            <canvas id="animationCanvas"></canvas>
+          </div>
+          <div class="playbar">
+            <button id="prevFrameButton" class="ghost" disabled>Prev</button>
+            <button id="playPauseButton" class="secondary" disabled>Pause</button>
+            <input id="previewScrubber" type="range" min="0" max="0" value="0" disabled>
+            <span id="previewFrameLabel" class="frame-readout">0 / 0</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="panel-title">Selected Sprite Sheet</div>
+            <div id="sheetInfo" class="status">尚未產生</div>
+          </div>
+          <div class="preview-wrap sheet-preview-wrap">
+            <canvas id="sheetCanvas" tabindex="0"></canvas>
+          </div>
+          <div class="download-bar">
+          <button id="deleteSheetFrame" class="ghost" disabled>Delete Unselected Frames</button>
+            <button id="clearSheetPick" class="ghost" disabled>Clear Sheet Pick</button>
+            <button id="downloadSheet" class="secondary" disabled>Download PNG</button>
+            <button id="downloadJson" class="secondary" disabled>Download JSON</button>
+            <button id="downloadReport" class="secondary" disabled>Download Report</button>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Keyframe Report</div>
+          <div class="status">source frame / duration / score</div>
+        </div>
+        <div style="overflow:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Source Frame</th>
+                <th>Time</th>
+                <th>Duration</th>
+                <th>Sheet</th>
+                <th>Score</th>
+                <th>Tags</th>
+              </tr>
+            </thead>
+            <tbody id="reportBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <canvas id="workCanvas" hidden></canvas>
+
+  <script>
+    const fileInput = document.querySelector("#fileInput");
+    const video = document.querySelector("#video");
+    const processButton = document.querySelector("#processButton");
+    const clearButton = document.querySelector("#clearButton");
+    const statusEl = document.querySelector("#status");
+    const timelineEl = document.querySelector("#timeline");
+    const reportBody = document.querySelector("#reportBody");
+    const sheetCanvas = document.querySelector("#sheetCanvas");
+    const animationCanvas = document.querySelector("#animationCanvas");
+    const workCanvas = document.querySelector("#workCanvas");
+    const rawCount = document.querySelector("#rawCount");
+    const selectedCount = document.querySelector("#selectedCount");
+    const durationLabel = document.querySelector("#durationLabel");
+    const sheetInfo = document.querySelector("#sheetInfo");
+    const animationInfo = document.querySelector("#animationInfo");
+    const downloadSheet = document.querySelector("#downloadSheet");
+    const downloadJson = document.querySelector("#downloadJson");
+    const downloadReport = document.querySelector("#downloadReport");
+    const deleteSheetFrame = document.querySelector("#deleteSheetFrame");
+    const clearSheetPick = document.querySelector("#clearSheetPick");
+    const selectAllButton = document.querySelector("#selectAllButton");
+    const clearSelectionButton = document.querySelector("#clearSelectionButton");
+    const autoSuggestButton = document.querySelector("#autoSuggestButton");
+    const previewSpeedInput = document.querySelector("#previewSpeedInput");
+    const previewTimingInput = document.querySelector("#previewTimingInput");
+    const prevFrameButton = document.querySelector("#prevFrameButton");
+    const playPauseButton = document.querySelector("#playPauseButton");
+    const previewScrubber = document.querySelector("#previewScrubber");
+    const previewFrameLabel = document.querySelector("#previewFrameLabel");
+
+    let objectUrl = "";
+    let rawFrames = [];
+    let selectedFrameIndexes = new Set();
+    let selectedFrames = [];
+    let timingData = null;
+    let reportMarkdown = "";
+    let previewTimer = 0;
+    let previewRunId = 0;
+    let currentPreviewOrder = 0;
+    let isPreviewPlaying = true;
+    let selectedSheetOrder = null;
+    let unselectedSheetFrames = new Set();
+
+    installFramePanel();
+    video.addEventListener("loadedmetadata", updateSourceAspect);
+    window.addEventListener("resize", refitPreviewBoxes);
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      resetOutput();
+      if (!file) return;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(file);
+      video.src = objectUrl;
+      statusEl.textContent = `已載入 ${file.name}`;
+    });
+
+    processButton.addEventListener("click", async () => {
+      const file = fileInput.files[0];
+      if (!file) {
+        statusEl.textContent = "請先選擇影片";
+        return;
+      }
+      processButton.disabled = true;
+      try {
+        await processVideo(file);
+      } catch (error) {
+        console.error(error);
+        statusEl.textContent = `處理失敗：${error.message}`;
+      } finally {
+        processButton.disabled = false;
+      }
+    });
+
+    clearButton.addEventListener("click", () => {
+      fileInput.value = "";
+      video.removeAttribute("src");
+      video.load();
+      resetOutput();
+      statusEl.textContent = "等待選擇影片";
+    });
+
+    downloadSheet.addEventListener("click", () => downloadCanvas(sheetCanvas, sheetFileName()));
+    downloadJson.addEventListener("click", () => downloadText("unity_timing.json", JSON.stringify(timingData, null, 2), "application/json"));
+    downloadReport.addEventListener("click", () => downloadText("keyframe_report.md", reportMarkdown, "text/markdown"));
+    deleteSheetFrame.addEventListener("click", deleteSelectedSheetFrame);
+    clearSheetPick.addEventListener("click", () => {
+      selectedSheetOrder = null;
+      renderSheet(readSettings());
+      renderTimeline();
+      updateSheetEditButtons();
+    });
+    sheetCanvas.addEventListener("click", selectSheetFrameAtPointer);
+    sheetCanvas.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        deleteSelectedSheetFrame();
+      }
+    });
+    selectAllButton.addEventListener("click", () => {
+      selectedFrameIndexes = new Set(rawFrames.map(frame => frame.index));
+      updateSelectedOutputs();
+    });
+    clearSelectionButton.addEventListener("click", () => {
+      selectedFrameIndexes.clear();
+      updateSelectedOutputs();
+    });
+    autoSuggestButton.addEventListener("click", () => {
+      const settings = readSettings();
+      const picks = chooseKeyframes(rawFrames.map(frame => frame.score || 0), rawFrames.length, settings);
+      selectedFrameIndexes = new Set(picks);
+      updateSelectedOutputs();
+    });
+    previewSpeedInput.addEventListener("input", () => {
+      if (selectedFrames.length > 0) {
+        restartAnimationPreview(readSettings());
+      }
+    });
+    previewTimingInput.addEventListener("change", () => {
+      if (selectedFrames.length > 0) {
+        restartAnimationPreview(readSettings(), { nextDelayMs: 16 });
+      }
+    });
+    playPauseButton.addEventListener("click", () => {
+      if (!selectedFrames.length) return;
+      isPreviewPlaying = !isPreviewPlaying;
+      updatePlaybar();
+      if (isPreviewPlaying) {
+        scheduleNextPreviewFrame(readSettings());
+      } else {
+        stopAnimationPreview();
+      }
+    });
+    prevFrameButton.addEventListener("click", () => setPreviewOrder(currentPreviewOrder - 1));
+    previewScrubber.addEventListener("input", () => setPreviewOrder(Number(previewScrubber.value)));
+    ["#colsInput", "#widthInput", "#heightInput", "#paddingInput", "#fpsInput", "#loopInput"].forEach(selector => {
+      document.querySelector(selector).addEventListener("input", () => {
+        if (selectedFrames.length > 0 || selectedFrameIndexes.size > 0) {
+          updateSelectedOutputs();
+        } else {
+          updateAutoRowsDisplay();
+        }
+      });
+    });
+    document.querySelector("#scaleModeInput").addEventListener("change", () => {
+      if (rawFrames.length > 0) {
+        statusEl.textContent = "Scale Mode 會影響抽幀結果，請重新 Extract Frames";
+      }
+    });
+
+    function installFramePanel() {
+      const shell = document.querySelector(".shell");
+      const sourceSide = document.querySelector(".source-side");
+      if (!shell || !sourceSide || document.querySelector(".frame-panel")) return;
+
+      const panel = document.createElement("section");
+      panel.className = "panel frame-panel";
+      panel.innerHTML = `
+        <div class="panel-head">
+          <div class="panel-title">Select Frames</div>
+          <div class="status">manual pick list</div>
+        </div>
+      `;
+      panel.append(sourceSide);
+      shell.append(panel);
+    }
+
+    async function processVideo(file) {
+      const settings = readSettings();
+
+      statusEl.textContent = "讀取影片 metadata...";
+      await waitForMetadata(video);
+      updateSourceAspect();
+
+      const durationMs = Math.max(1, Math.round(video.duration * 1000));
+      const stepMs = 1000 / settings.sampleFps;
+      const totalSamples = Math.max(1, Math.floor(durationMs / stepMs) + 1);
+
+      rawFrames = [];
+      for (let i = 0; i < totalSamples; i++) {
+        const time = Math.min(video.duration, i * stepMs / 1000);
+        statusEl.textContent = `擷取原始幀 ${i + 1} / ${totalSamples}`;
+        const frame = await captureFrame(video, time, settings.width, settings.height, settings.scaleMode);
+        rawFrames.push({ index: i, timeMs: Math.round(time * 1000), canvas: frame });
+      }
+
+      statusEl.textContent = "分析每幀差異...";
+      const scores = calculateScores(rawFrames);
+      rawFrames.forEach((frame, index) => {
+        frame.score = scores[index];
+      });
+      selectedFrameIndexes.clear();
+      renderTimeline();
+
+      rawCount.textContent = rawFrames.length;
+      selectedCount.textContent = "0";
+      durationLabel.textContent = `${durationMs}ms`;
+      sheetInfo.textContent = "請勾選要匯出的 frame";
+      selectAllButton.disabled = false;
+      clearSelectionButton.disabled = false;
+      autoSuggestButton.disabled = false;
+      downloadSheet.disabled = true;
+      downloadJson.disabled = true;
+      downloadReport.disabled = true;
+      statusEl.textContent = "已抽出全 frame，請勾選需要的格";
+    }
+
+    function readSettings() {
+      const target = intValue("#targetInput", 16);
+      const cols = intValue("#colsInput", 4);
+      const selectedCountForRows = Math.max(selectedFrameIndexes.size, selectedFrames.length, 0);
+      const rows = autoRows(selectedCountForRows, cols);
+      return {
+        target,
+        sampleFps: intValue("#fpsInput", 30),
+        cols,
+        rows,
+        width: intValue("#widthInput", 256),
+        height: intValue("#heightInput", 256),
+        padding: intValue("#paddingInput", 0),
+        scaleMode: document.querySelector("#scaleModeInput").value,
+        previewSpeed: Math.max(0.1, Number(previewSpeedInput.value) || 1),
+        previewTiming: previewTimingInput.value,
+        minDistance: intValue("#distanceInput", 0),
+        locked: parseIntSet(document.querySelector("#lockInput").value),
+        excluded: parseIntSet(document.querySelector("#excludeInput").value),
+        loop: document.querySelector("#loopInput").checked
+      };
+    }
+
+    function autoRows(count, cols) {
+      if (!count) return 0;
+      return Math.max(1, Math.ceil(count / Math.max(1, cols)));
+    }
+
+    function updateAutoRowsDisplay() {
+      const cols = intValue("#colsInput", 4);
+      const count = Math.max(selectedFrameIndexes.size, selectedFrames.length, 0);
+      document.querySelector("#rowsInput").value = String(autoRows(count, cols));
+    }
+
+    function intValue(selector, fallback) {
+      const value = parseInt(document.querySelector(selector).value, 10);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function updateSourceAspect() {
+      if (!video.videoWidth || !video.videoHeight) return;
+      setPreviewAspect(".source-preview-wrap", video.videoWidth, video.videoHeight);
+    }
+
+    function updateFrameAspect(settings) {
+      setPreviewAspect(".animation-preview-wrap", settings.width, settings.height);
+    }
+
+    function updateSheetAspect(width, height) {
+      if (!width || !height) return;
+      setPreviewAspect(".sheet-preview-wrap", width, height);
+    }
+
+    function setPreviewAspect(selector, width, height) {
+      const wrap = document.querySelector(selector);
+      if (!wrap || !width || !height) return;
+      wrap.style.setProperty("--preview-aspect", `${width} / ${height}`);
+      wrap.dataset.aspectWidth = String(width);
+      wrap.dataset.aspectHeight = String(height);
+      fitPreviewBox(wrap);
+    }
+
+    function fitPreviewBox(wrap) {
+      const width = Number(wrap.dataset.aspectWidth);
+      const height = Number(wrap.dataset.aspectHeight);
+      if (!width || !height) return;
+      const boxWidth = wrap.getBoundingClientRect().width;
+      if (!boxWidth) return;
+      wrap.style.height = `${Math.ceil(boxWidth * height / width)}px`;
+    }
+
+    function refitPreviewBoxes() {
+      document.querySelectorAll(".preview-wrap").forEach(fitPreviewBox);
+    }
+
+    function parseIntSet(value) {
+      return new Set(value.split(",").map(part => parseInt(part.trim(), 10)).filter(Number.isFinite));
+    }
+
+    function waitForMetadata(media) {
+      if (Number.isFinite(media.duration) && media.videoWidth > 0) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        media.onloadedmetadata = () => resolve();
+        media.onerror = () => reject(new Error("瀏覽器無法讀取這個影片格式"));
+      });
+    }
+
+    function seekTo(media, time) {
+      return new Promise((resolve, reject) => {
+        const done = () => {
+          media.removeEventListener("seeked", done);
+          resolve();
+        };
+        media.addEventListener("seeked", done, { once: true });
+        media.onerror = () => reject(new Error("影片 seek 失敗"));
+        media.currentTime = time;
+      });
+    }
+
+    async function captureFrame(media, time, width, height, scaleMode) {
+      await seekTo(media, time);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.clearRect(0, 0, width, height);
+      drawImageFitted(ctx, media, width, height, scaleMode);
+      return canvas;
+    }
+
+    function drawImageFitted(ctx, source, targetWidth, targetHeight, scaleMode) {
+      const sourceWidth = source.videoWidth || source.width;
+      const sourceHeight = source.videoHeight || source.height;
+      if (scaleMode === "stretch") {
+        ctx.drawImage(source, 0, 0, targetWidth, targetHeight);
+        return;
+      }
+
+      const sourceRatio = sourceWidth / sourceHeight;
+      const targetRatio = targetWidth / targetHeight;
+
+      if (scaleMode === "cover") {
+        let sx = 0;
+        let sy = 0;
+        let sw = sourceWidth;
+        let sh = sourceHeight;
+        if (sourceRatio > targetRatio) {
+          sw = sourceHeight * targetRatio;
+          sx = (sourceWidth - sw) / 2;
+        } else {
+          sh = sourceWidth / targetRatio;
+          sy = (sourceHeight - sh) / 2;
+        }
+        ctx.drawImage(source, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
+        return;
+      }
+
+      const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+      const dw = sourceWidth * scale;
+      const dh = sourceHeight * scale;
+      const dx = (targetWidth - dw) / 2;
+      const dy = (targetHeight - dh) / 2;
+      ctx.drawImage(source, dx, dy, dw, dh);
+    }
+
+    function calculateScores(frames) {
+      if (frames.length === 1) return [0];
+      const diffs = [0];
+      for (let i = 1; i < frames.length; i++) {
+        diffs.push(frameDiff(frames[i - 1].canvas, frames[i].canvas));
+      }
+      const scores = new Array(frames.length).fill(0);
+      for (let i = 1; i < frames.length; i++) {
+        const delta = Math.abs(diffs[i] - diffs[i - 1]);
+        scores[i] = diffs[i] * 0.7 + delta * 0.3;
+      }
+      return scores;
+    }
+
+    function frameDiff(a, b) {
+      const ctxA = a.getContext("2d", { willReadFrequently: true });
+      const ctxB = b.getContext("2d", { willReadFrequently: true });
+      const dataA = ctxA.getImageData(0, 0, a.width, a.height).data;
+      const dataB = ctxB.getImageData(0, 0, b.width, b.height).data;
+      let rgb = 0;
+      let alpha = 0;
+      const pixels = a.width * a.height;
+      for (let i = 0; i < dataA.length; i += 4) {
+        rgb += Math.abs(dataA[i] - dataB[i]) + Math.abs(dataA[i + 1] - dataB[i + 1]) + Math.abs(dataA[i + 2] - dataB[i + 2]);
+        alpha += Math.abs(dataA[i + 3] - dataB[i + 3]);
+      }
+      return (rgb / (pixels * 3 * 255)) * 0.7 + (alpha / (pixels * 255)) * 0.3;
+    }
+
+    function chooseKeyframes(scores, total, settings) {
+      const selected = new Set([0]);
+      if (!settings.loop) selected.add(total - 1);
+      settings.locked.forEach(index => {
+        if (index >= 0 && index < total && !settings.excluded.has(index)) selected.add(index);
+      });
+      settings.excluded.forEach(index => selected.delete(index));
+
+      const minDistance = settings.minDistance || Math.max(1, Math.floor(total / settings.target / 2));
+      const ranked = scores.map((score, index) => ({ score, index })).sort((a, b) => b.score - a.score);
+      let distance = minDistance;
+      while (selected.size < settings.target && distance >= 0) {
+        let changed = false;
+        for (const item of ranked) {
+          if (selected.size >= settings.target) break;
+          if (selected.has(item.index) || settings.excluded.has(item.index)) continue;
+          if (distance > 0 && [...selected].some(other => Math.abs(other - item.index) < distance)) continue;
+          selected.add(item.index);
+          changed = true;
+        }
+        if (!changed) distance--;
+      }
+
+      for (let i = 0; selected.size < settings.target && i < total; i++) {
+        const index = Math.round(i * (total - 1) / Math.max(1, settings.target - 1));
+        if (!settings.excluded.has(index)) selected.add(index);
+      }
+
+      return [...selected].sort((a, b) => a - b).slice(0, settings.target);
+    }
+
+    function calculateDurations(picks, sampleFps, totalDurationMs) {
+      if (picks.length === 1) return [totalDurationMs];
+      const times = picks.map(index => index / sampleFps * 1000);
+      const boundaries = [0];
+      for (let i = 1; i < times.length; i++) {
+        boundaries.push((times[i - 1] + times[i]) / 2);
+      }
+      boundaries.push(totalDurationMs);
+      const durations = [];
+      for (let i = 0; i < picks.length; i++) {
+        durations.push(Math.max(1, Math.round(boundaries[i + 1] - boundaries[i])));
+      }
+      const drift = totalDurationMs - durations.reduce((sum, value) => sum + value, 0);
+      durations[durations.length - 1] = Math.max(1, durations[durations.length - 1] + drift);
+      return durations;
+    }
+
+    function renderSheet(settings) {
+      if (selectedFrames.length === 0) {
+        selectedSheetOrder = null;
+        sheetCanvas.width = 0;
+        sheetCanvas.height = 0;
+        updateSheetAspect(
+          settings.cols * settings.width + Math.max(0, settings.cols - 1) * settings.padding,
+          Math.max(1, settings.rows) * settings.height + Math.max(0, Math.max(1, settings.rows) - 1) * settings.padding
+        );
+        updateSheetEditButtons();
+        return;
+      }
+      const width = settings.cols * settings.width + Math.max(0, settings.cols - 1) * settings.padding;
+      const height = settings.rows * settings.height + Math.max(0, settings.rows - 1) * settings.padding;
+      sheetCanvas.width = width;
+      sheetCanvas.height = height;
+      updateSheetAspect(width, height);
+      const ctx = sheetCanvas.getContext("2d");
+      ctx.clearRect(0, 0, width, height);
+      selectedFrames.forEach(frame => {
+        const x = frame.sheetX * (settings.width + settings.padding);
+        const y = frame.sheetY * (settings.height + settings.padding);
+        const checked = !unselectedSheetFrames.has(frame.sourceFrame);
+        ctx.drawImage(frame.canvas, x, y, settings.width, settings.height);
+        if (!checked) {
+          ctx.fillStyle = "rgba(255, 253, 247, .62)";
+          ctx.fillRect(x, y, settings.width, settings.height);
+        }
+        drawSheetCheckbox(ctx, x, y, settings, checked);
+      });
+      drawSheetPlayback(ctx, settings);
+      drawSheetSelection(ctx, settings);
+      updateSheetEditButtons();
+    }
+
+    function drawSheetCheckbox(ctx, x, y, settings, checked) {
+      const size = Math.max(18, Math.min(30, Math.round(Math.min(settings.width, settings.height) * 0.13)));
+      const pad = Math.max(5, Math.round(size * 0.28));
+      const bx = x + pad;
+      const by = y + pad;
+      ctx.save();
+      ctx.fillStyle = "rgba(255, 253, 247, .96)";
+      ctx.strokeStyle = checked ? "#e13d2f" : "#68645f";
+      ctx.lineWidth = Math.max(2, Math.round(size * 0.08));
+      ctx.beginPath();
+      ctx.roundRect(bx, by, size, size, Math.max(3, Math.round(size * 0.18)));
+      ctx.fill();
+      ctx.stroke();
+      if (checked) {
+        ctx.strokeStyle = "#e13d2f";
+        ctx.lineWidth = Math.max(3, Math.round(size * 0.14));
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(bx + size * 0.25, by + size * 0.52);
+        ctx.lineTo(bx + size * 0.43, by + size * 0.70);
+        ctx.lineTo(bx + size * 0.76, by + size * 0.30);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function sheetCheckboxHit(innerX, innerY, settings) {
+      const size = Math.max(18, Math.min(30, Math.round(Math.min(settings.width, settings.height) * 0.13)));
+      const pad = Math.max(5, Math.round(size * 0.28));
+      return innerX >= pad && innerX <= pad + size && innerY >= pad && innerY <= pad + size;
+    }
+
+    function drawSheetSelection(ctx, settings) {
+      if (selectedSheetOrder === null || !selectedFrames[selectedSheetOrder]) return;
+      const frame = selectedFrames[selectedSheetOrder];
+      const x = frame.sheetX * (settings.width + settings.padding);
+      const y = frame.sheetY * (settings.height + settings.padding);
+      ctx.save();
+      ctx.lineWidth = Math.max(3, Math.round(Math.min(settings.width, settings.height) * 0.025));
+      ctx.strokeStyle = "#106b68";
+      ctx.strokeRect(x + ctx.lineWidth / 2, y + ctx.lineWidth / 2, settings.width - ctx.lineWidth, settings.height - ctx.lineWidth);
+      ctx.fillStyle = "rgba(16, 107, 104, .18)";
+      ctx.fillRect(x, y, settings.width, settings.height);
+      ctx.restore();
+    }
+
+    function drawSheetPlayback(ctx, settings) {
+      const frames = previewFrames();
+      if (!frames[currentPreviewOrder]) return;
+      const frame = frames[currentPreviewOrder];
+      const x = frame.sheetX * (settings.width + settings.padding);
+      const y = frame.sheetY * (settings.height + settings.padding);
+      ctx.save();
+      ctx.lineWidth = Math.max(4, Math.round(Math.min(settings.width, settings.height) * 0.035));
+      ctx.strokeStyle = "#e2a52e";
+      ctx.strokeRect(x + ctx.lineWidth, y + ctx.lineWidth, settings.width - ctx.lineWidth * 2, settings.height - ctx.lineWidth * 2);
+      ctx.fillStyle = "rgba(226, 165, 46, .16)";
+      ctx.fillRect(x, y, settings.width, settings.height);
+      ctx.restore();
+    }
+
+    function selectSheetFrameAtPointer(event) {
+      if (!selectedFrames.length || !sheetCanvas.width || !sheetCanvas.height) return;
+      const settings = readSettings();
+      const rect = sheetCanvas.getBoundingClientRect();
+      const x = (event.clientX - rect.left) * (sheetCanvas.width / rect.width);
+      const y = (event.clientY - rect.top) * (sheetCanvas.height / rect.height);
+      const cellW = settings.width + settings.padding;
+      const cellH = settings.height + settings.padding;
+      const col = Math.floor(x / cellW);
+      const row = Math.floor(y / cellH);
+      const innerX = x - col * cellW;
+      const innerY = y - row * cellH;
+      if (innerX > settings.width || innerY > settings.height) return;
+      const order = row * settings.cols + col;
+      if (!selectedFrames[order]) return;
+      selectedSheetOrder = order;
+      if (sheetCheckboxHit(innerX, innerY, settings)) {
+        const sourceFrame = selectedFrames[order].sourceFrame;
+        if (unselectedSheetFrames.has(sourceFrame)) {
+          unselectedSheetFrames.delete(sourceFrame);
+        } else {
+          unselectedSheetFrames.add(sourceFrame);
+        }
+        currentPreviewOrder = 0;
+        renderSheet(settings);
+        restartAnimationPreview(settings, { nextDelayMs: 16 });
+        renderTimeline();
+        updateSheetEditButtons();
+        return;
+      }
+      renderSheet(settings);
+      renderTimeline();
+      updateSheetEditButtons();
+    }
+
+    function deleteSelectedSheetFrame() {
+      if (unselectedSheetFrames.size === 0) return;
+      const wasPlaying = isPreviewPlaying;
+      unselectedSheetFrames.forEach(sourceFrame => selectedFrameIndexes.delete(sourceFrame));
+      unselectedSheetFrames.clear();
+      selectedSheetOrder = null;
+      currentPreviewOrder = 0;
+      updateSelectedOutputs({ preservePlayback: wasPlaying, nextDelayMs: 16 });
+    }
+
+    function removeSelectedFrameAtOrder(order) {
+      if (!selectedFrames[order]) return;
+      const frame = selectedFrames[order];
+      const wasPlaying = isPreviewPlaying;
+      selectedFrameIndexes.delete(frame.sourceFrame);
+      selectedSheetOrder = null;
+      currentPreviewOrder = 0;
+      updateSelectedOutputs({ preservePlayback: wasPlaying, nextDelayMs: 16 });
+    }
+
+    function updateSheetEditButtons() {
+      const hasPick = selectedSheetOrder !== null && !!selectedFrames[selectedSheetOrder];
+      deleteSheetFrame.disabled = unselectedSheetFrames.size === 0;
+      clearSheetPick.disabled = !hasPick;
+    }
+
+    function previewFrames() {
+      return selectedFrames.filter(frame => !unselectedSheetFrames.has(frame.sourceFrame));
+    }
+
+    function renderTimeline() {
+      timelineEl.innerHTML = "";
+      rawFrames.forEach(frame => {
+        const item = document.createElement("button");
+        item.type = "button";
+        const sheetActive = selectedSheetOrder !== null && selectedFrames[selectedSheetOrder]?.sourceFrame === frame.index;
+        item.className = `thumb ${selectedFrameIndexes.has(frame.index) ? "selected" : ""} ${sheetActive ? "sheet-active" : ""}`;
+        const canvas = document.createElement("canvas");
+        canvas.width = 96;
+        canvas.height = 96;
+        canvas.getContext("2d").drawImage(frame.canvas, 0, 0, 96, 96);
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = selectedFrameIndexes.has(frame.index);
+        const label = document.createElement("small");
+        label.textContent = `#${frame.index} / ${Math.round((frame.score || 0) * 1000)}`;
+        item.append(checkbox, canvas, label);
+        item.addEventListener("click", event => {
+          event.preventDefault();
+          toggleFrameSelection(frame.index);
+        });
+        timelineEl.append(item);
+      });
+    }
+
+    function toggleFrameSelection(index) {
+      if (selectedFrameIndexes.has(index)) {
+        selectedFrameIndexes.delete(index);
+      } else {
+        selectedFrameIndexes.add(index);
+      }
+      updateSelectedOutputs();
+    }
+
+    function updateSelectedOutputs(options = {}) {
+      const shouldPreservePlayback = Object.prototype.hasOwnProperty.call(options, "preservePlayback");
+      const wasPlaying = shouldPreservePlayback ? options.preservePlayback : null;
+      const settings = readSettings();
+      const selectedIndexes = [...selectedFrameIndexes].sort((a, b) => a - b);
+      const durationMs = Math.max(1, Math.round(video.duration * 1000));
+      const durations = selectedIndexes.length
+        ? calculateDurations(selectedIndexes, settings.sampleFps, durationMs)
+        : [];
+
+      selectedFrames = selectedIndexes.map((sourceFrame, order) => {
+        const tags = [];
+        if (sourceFrame === 0) tags.push("start");
+        if (!settings.loop && sourceFrame === rawFrames.length - 1) tags.push("end");
+        if (settings.locked.has(sourceFrame)) tags.push("locked");
+        if (tags.length === 0) tags.push("manual");
+        return {
+          order,
+          sourceFrame,
+          sourceTimeMs: rawFrames[sourceFrame].timeMs,
+          durationMs: durations[order],
+          sheetX: order % settings.cols,
+          sheetY: Math.floor(order / settings.cols),
+          tags,
+          score: rawFrames[sourceFrame].score || 0,
+          locked: settings.locked.has(sourceFrame),
+          canvas: rawFrames[sourceFrame].canvas
+        };
+      });
+      const selectedIndexSet = new Set(selectedIndexes);
+      unselectedSheetFrames = new Set([...unselectedSheetFrames].filter(sourceFrame => selectedIndexSet.has(sourceFrame)));
+      if (selectedSheetOrder !== null && selectedSheetOrder >= selectedFrames.length) {
+        selectedSheetOrder = null;
+      }
+      if (currentPreviewOrder >= selectedFrames.length) {
+        currentPreviewOrder = Math.max(0, selectedFrames.length - 1);
+      }
+      updateAutoRowsDisplay();
+
+      renderSheet(settings);
+      if (shouldPreservePlayback) {
+        isPreviewPlaying = !!wasPlaying;
+      }
+      restartAnimationPreview(settings, { nextDelayMs: options.nextDelayMs });
+      renderTimeline();
+
+      selectedCount.textContent = selectedFrames.length;
+      const selectedDurationMs = selectedFrames.reduce((sum, frame) => sum + frame.durationMs, 0);
+      durationLabel.textContent = `${selectedDurationMs}ms`;
+      sheetInfo.textContent = selectedFrames.length
+        ? `${settings.cols} columns, ${settings.rows} rows, ${settings.width}x${settings.height}`
+        : "請勾選要匯出的 frame";
+
+      if (selectedFrames.length > 0) {
+        statusEl.textContent = "已更新選取預覽";
+        const file = fileInput.files[0] || { name: "manual_selection.mp4" };
+        buildTimingJson(file, settings, durationMs);
+        renderReport();
+        downloadSheet.disabled = false;
+        downloadJson.disabled = false;
+        downloadReport.disabled = false;
+      } else {
+        statusEl.textContent = rawFrames.length ? "已抽出全 frame，請勾選需要的格" : "等待選擇影片";
+        timingData = null;
+        reportMarkdown = "";
+        reportBody.innerHTML = "";
+        stopAnimationPreview();
+        currentPreviewOrder = 0;
+        updatePlaybar();
+        downloadSheet.disabled = true;
+        downloadJson.disabled = true;
+        downloadReport.disabled = true;
+      }
+    }
+
+    function restartAnimationPreview(settings, options = {}) {
+      stopAnimationPreview();
+      updateFrameAspect(settings);
+      if (selectedFrames.length === 0) {
+        clearAnimationCanvas(settings);
+        animationInfo.textContent = "請先勾選 frame";
+        return;
+      }
+
+      animationCanvas.width = settings.width;
+      animationCanvas.height = settings.height;
+      currentPreviewOrder = Math.min(currentPreviewOrder, selectedFrames.length - 1);
+      animationInfo.textContent = `${selectedFrames.length} frames / ${selectedFrames.reduce((sum, frame) => sum + frame.durationMs, 0)}ms / ${settings.previewSpeed}x / ${settings.previewTiming}`;
+      renderPreviewFrame(settings);
+      updatePlaybar();
+      if (isPreviewPlaying) {
+        scheduleNextPreviewFrame(settings, options.nextDelayMs);
+      }
+    }
+
+    function renderPreviewFrame(settings = readSettings()) {
+      if (selectedFrames.length === 0) {
+        clearAnimationCanvas(settings);
+        return;
+      }
+
+      currentPreviewOrder = Math.max(0, Math.min(currentPreviewOrder, selectedFrames.length - 1));
+      const frame = selectedFrames[currentPreviewOrder];
+      const ctx = animationCanvas.getContext("2d");
+      ctx.clearRect(0, 0, animationCanvas.width, animationCanvas.height);
+      ctx.drawImage(frame.canvas, 0, 0, settings.width, settings.height);
+      renderSheet(settings);
+      updatePlaybar();
+    }
+
+    function scheduleNextPreviewFrame(settings = readSettings(), delayOverrideMs = null) {
+      stopAnimationPreview();
+      if (!isPreviewPlaying || selectedFrames.length === 0) return;
+      const frame = selectedFrames[currentPreviewOrder];
+      const runId = ++previewRunId;
+      previewTimer = window.setTimeout(
+        () => {
+          if (runId !== previewRunId) return;
+          currentPreviewOrder = (currentPreviewOrder + 1) % selectedFrames.length;
+          renderPreviewFrame(settings);
+          scheduleNextPreviewFrame(settings);
+        },
+        previewDelayMs(frame, settings, delayOverrideMs)
+      );
+    }
+
+    function previewDelayMs(frame, settings, delayOverrideMs = null) {
+      if (delayOverrideMs !== null && delayOverrideMs !== undefined) {
+        return Math.max(16, delayOverrideMs);
+      }
+      if (settings.previewTiming === "timing") {
+        return Math.max(16, frame.durationMs / settings.previewSpeed);
+      }
+      return Math.max(16, 80 / settings.previewSpeed);
+    }
+
+    function stopAnimationPreview() {
+      previewRunId++;
+      if (previewTimer) {
+        window.clearTimeout(previewTimer);
+        previewTimer = 0;
+      }
+    }
+
+    function clearAnimationCanvas(settings = readSettings()) {
+      updateFrameAspect(settings);
+      animationCanvas.width = settings.width;
+      animationCanvas.height = settings.height;
+      const ctx = animationCanvas.getContext("2d");
+      ctx.clearRect(0, 0, animationCanvas.width, animationCanvas.height);
+      updatePlaybar();
+    }
+
+    function updatePlaybar() {
+      const hasFrames = selectedFrames.length > 0;
+      playPauseButton.disabled = !hasFrames;
+      prevFrameButton.disabled = !hasFrames;
+      previewScrubber.disabled = !hasFrames;
+      previewScrubber.max = String(Math.max(0, selectedFrames.length - 1));
+      previewScrubber.value = String(hasFrames ? currentPreviewOrder : 0);
+      playPauseButton.textContent = isPreviewPlaying ? "Pause" : "Play";
+      previewFrameLabel.textContent = hasFrames ? `${currentPreviewOrder + 1} / ${selectedFrames.length}` : "0 / 0";
+    }
+
+    function setPreviewOrder(order, shouldPause = true) {
+      if (!selectedFrames.length) return;
+      currentPreviewOrder = (order + selectedFrames.length) % selectedFrames.length;
+      if (shouldPause) {
+        isPreviewPlaying = false;
+        stopAnimationPreview();
+      }
+      renderPreviewFrame(readSettings());
+    }
+
+    function restartAnimationPreview(settings, options = {}) {
+      stopAnimationPreview();
+      updateFrameAspect(settings);
+      const frames = previewFrames();
+      if (frames.length === 0) {
+        clearAnimationCanvas(settings);
+        animationInfo.textContent = "No checked frames";
+        return;
+      }
+
+      animationCanvas.width = settings.width;
+      animationCanvas.height = settings.height;
+      currentPreviewOrder = Math.min(currentPreviewOrder, frames.length - 1);
+      animationInfo.textContent = `${frames.length} checked / ${selectedFrames.length} sheet / ${frames.reduce((sum, frame) => sum + frame.durationMs, 0)}ms / ${settings.previewSpeed}x / ${settings.previewTiming}`;
+      renderPreviewFrame(settings);
+      updatePlaybar();
+      if (isPreviewPlaying) {
+        scheduleNextPreviewFrame(settings, options.nextDelayMs);
+      }
+    }
+
+    function renderPreviewFrame(settings = readSettings()) {
+      const frames = previewFrames();
+      if (frames.length === 0) {
+        clearAnimationCanvas(settings);
+        return;
+      }
+
+      currentPreviewOrder = Math.max(0, Math.min(currentPreviewOrder, frames.length - 1));
+      const frame = frames[currentPreviewOrder];
+      const ctx = animationCanvas.getContext("2d");
+      ctx.clearRect(0, 0, animationCanvas.width, animationCanvas.height);
+      ctx.drawImage(frame.canvas, 0, 0, settings.width, settings.height);
+      renderSheet(settings);
+      updatePlaybar();
+    }
+
+    function scheduleNextPreviewFrame(settings = readSettings(), delayOverrideMs = null) {
+      stopAnimationPreview();
+      const frames = previewFrames();
+      if (!isPreviewPlaying || frames.length === 0) return;
+      currentPreviewOrder = Math.max(0, Math.min(currentPreviewOrder, frames.length - 1));
+      const frame = frames[currentPreviewOrder];
+      const runId = ++previewRunId;
+      previewTimer = window.setTimeout(
+        () => {
+          if (runId !== previewRunId) return;
+          const nextFrames = previewFrames();
+          if (!nextFrames.length) return;
+          currentPreviewOrder = (currentPreviewOrder + 1) % nextFrames.length;
+          renderPreviewFrame(settings);
+          scheduleNextPreviewFrame(settings);
+        },
+        previewDelayMs(frame, settings, delayOverrideMs)
+      );
+    }
+
+    function updatePlaybar() {
+      const frames = previewFrames();
+      const hasFrames = frames.length > 0;
+      playPauseButton.disabled = !hasFrames;
+      prevFrameButton.disabled = !hasFrames;
+      previewScrubber.disabled = !hasFrames;
+      previewScrubber.max = String(Math.max(0, frames.length - 1));
+      previewScrubber.value = String(hasFrames ? currentPreviewOrder : 0);
+      playPauseButton.textContent = isPreviewPlaying ? "Pause" : "Play";
+      previewFrameLabel.textContent = hasFrames ? `${currentPreviewOrder + 1} / ${frames.length}` : "0 / 0";
+    }
+
+    function setPreviewOrder(order, shouldPause = true) {
+      const frames = previewFrames();
+      if (!frames.length) return;
+      currentPreviewOrder = (order + frames.length) % frames.length;
+      if (shouldPause) {
+        isPreviewPlaying = false;
+        stopAnimationPreview();
+      }
+      renderPreviewFrame(readSettings());
+    }
+
+    function buildTimingJson(file, settings, durationMs) {
+      timingData = {
+        version: "0.1",
+        animation_name: file.name.replace(/\.[^.]+$/, ""),
+        source: {
+          video: file.name,
+          duration_ms: durationMs,
+          source_fps: settings.sampleFps,
+          raw_frame_count: rawFrames.length
+        },
+        sheet: {
+          image: sheetFileName(),
+          columns: settings.cols,
+          rows: settings.rows,
+          frame_width: settings.width,
+          frame_height: settings.height,
+          padding: settings.padding,
+          scale_mode: settings.scaleMode
+        },
+        animation: {
+          loop: settings.loop,
+          total_duration_ms: selectedFrames.reduce((sum, frame) => sum + frame.durationMs, 0),
+          frames: selectedFrames.map(frame => ({
+            order: frame.order,
+            source_frame: frame.sourceFrame,
+            source_time_ms: frame.sourceTimeMs,
+            duration_ms: frame.durationMs,
+            duration_sec: Number((frame.durationMs / 1000).toFixed(6)),
+            sheet_x: frame.sheetX,
+            sheet_y: frame.sheetY,
+            tags: frame.tags,
+            score: Number(frame.score.toFixed(6)),
+            locked: frame.locked
+          }))
+        }
+      };
+    }
+
+    function renderReport() {
+      reportBody.innerHTML = "";
+      const lines = [
+        "# Keyframe Report",
+        "",
+        `- Selected frames: ${selectedFrames.length}`,
+        `- Total duration: ${timingData.animation.total_duration_ms} ms`,
+        "",
+        "| Order | Source Frame | Source Time | Duration | Sheet | Score | Tags |",
+        "| ---: | ---: | ---: | ---: | --- | ---: | --- |"
+      ];
+
+      selectedFrames.forEach(frame => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${frame.order}</td>
+          <td>${frame.sourceFrame}</td>
+          <td>${frame.sourceTimeMs}ms</td>
+          <td>${frame.durationMs}ms</td>
+          <td>(${frame.sheetX}, ${frame.sheetY})</td>
+          <td>${frame.score.toFixed(6)}</td>
+          <td>${frame.tags.join(", ")}</td>
+        `;
+        reportBody.append(tr);
+        lines.push(`| ${frame.order} | ${frame.sourceFrame} | ${frame.sourceTimeMs} ms | ${frame.durationMs} ms | (${frame.sheetX}, ${frame.sheetY}) | ${frame.score.toFixed(6)} | ${frame.tags.join(", ")} |`);
+      });
+      reportMarkdown = `${lines.join("\n")}\n`;
+    }
+
+    function resetOutput() {
+      rawFrames = [];
+      selectedFrameIndexes = new Set();
+      selectedFrames = [];
+      selectedSheetOrder = null;
+      unselectedSheetFrames = new Set();
+      currentPreviewOrder = 0;
+      isPreviewPlaying = true;
+      timingData = null;
+      reportMarkdown = "";
+      timelineEl.innerHTML = "";
+      reportBody.innerHTML = "";
+      rawCount.textContent = "0";
+      selectedCount.textContent = "0";
+      durationLabel.textContent = "0ms";
+      updateAutoRowsDisplay();
+      sheetInfo.textContent = "尚未產生";
+      sheetCanvas.width = 0;
+      sheetCanvas.height = 0;
+      animationInfo.textContent = "請先勾選 frame";
+      stopAnimationPreview();
+      clearAnimationCanvas();
+      updatePlaybar();
+      selectAllButton.disabled = true;
+      clearSelectionButton.disabled = true;
+      autoSuggestButton.disabled = true;
+      downloadSheet.disabled = true;
+      downloadJson.disabled = true;
+      downloadReport.disabled = true;
+    }
+
+    function sheetFileName() {
+      const settings = readSettings();
+      const cols = settings.cols;
+      const rows = Math.max(1, settings.rows);
+      return `reduced_sheet_${cols}x${rows}.png`;
+    }
+
+    function downloadCanvas(canvas, filename) {
+      canvas.toBlob(blob => {
+        if (!blob) return;
+        downloadBlob(filename, blob);
+      }, "image/png");
+    }
+
+    function downloadText(filename, text, type) {
+      downloadBlob(filename, new Blob([text], { type }));
+    }
+
+    function downloadBlob(filename, blob) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+__pycache__/
+output/
+raw_frames/
+*.pyc
+
+# Separate local project, not part of this tool backup.
+comfy-cloud-workflow-node/
