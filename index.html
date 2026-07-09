@@ -140,6 +140,15 @@
       accent-color: var(--accent-2);
     }
 
+    input[type="color"] {
+      width: 100%;
+      min-height: 42px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: white;
+    }
+
     .row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -425,6 +434,44 @@
       padding: 14px;
     }
 
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 6px;
+    }
+
+    .swatch {
+      min-height: 30px;
+      padding: 0;
+      border: 1px solid rgba(23, 23, 23, .22);
+      border-radius: 6px;
+      background: var(--swatch-color, #ffffff);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.42);
+    }
+
+    .swatch.is-active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(225, 61, 47, .16), inset 0 0 0 1px rgba(255,255,255,.42);
+    }
+
+    .range-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 52px;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .range-row input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent-2);
+    }
+
+    .range-row output {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
     .playbar {
       display: grid;
       grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -587,6 +634,45 @@
         </select>
       </div>
 
+      <div class="control">
+        <div class="check">
+          <input id="removeBgInput" type="checkbox">
+          <label for="removeBgInput">Remove Background</label>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Background Palette</label>
+        <div id="bgPalette" class="palette-grid"></div>
+      </div>
+
+      <div class="row">
+        <div class="control">
+          <label for="bgColorInput">Key Color</label>
+          <input id="bgColorInput" type="color" value="#2c22ff">
+        </div>
+        <div class="control">
+          <label for="bgToleranceInput">Tolerance</label>
+          <div class="range-row">
+            <input id="bgToleranceInput" type="range" min="0" max="180" value="48">
+            <output id="bgToleranceValue">48</output>
+          </div>
+        </div>
+      </div>
+
+      <div class="control">
+        <label for="bgSoftnessInput">Softness</label>
+        <div class="range-row">
+          <input id="bgSoftnessInput" type="range" min="0" max="120" value="24">
+          <output id="bgSoftnessValue">24</output>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="applyBgButton" class="secondary" disabled>Apply Key</button>
+        <button id="resetBgButton" class="ghost" disabled>Reset Key</button>
+      </div>
+
       <div class="note">Animation Preview 與 Sprite Sheet 都來自同一組 Selected Frames。Sheet Columns 只控制輸出排版，Rows 會自動依選取數計算。</div>
 
       <div class="control">
@@ -745,6 +831,15 @@
     const playPauseButton = document.querySelector("#playPauseButton");
     const previewScrubber = document.querySelector("#previewScrubber");
     const previewFrameLabel = document.querySelector("#previewFrameLabel");
+    const removeBgInput = document.querySelector("#removeBgInput");
+    const bgPalette = document.querySelector("#bgPalette");
+    const bgColorInput = document.querySelector("#bgColorInput");
+    const bgToleranceInput = document.querySelector("#bgToleranceInput");
+    const bgToleranceValue = document.querySelector("#bgToleranceValue");
+    const bgSoftnessInput = document.querySelector("#bgSoftnessInput");
+    const bgSoftnessValue = document.querySelector("#bgSoftnessValue");
+    const applyBgButton = document.querySelector("#applyBgButton");
+    const resetBgButton = document.querySelector("#resetBgButton");
 
     let objectUrl = "";
     let rawFrames = [];
@@ -758,6 +853,7 @@
     let isPreviewPlaying = true;
     let selectedSheetOrder = null;
     let unselectedSheetFrames = new Set();
+    let backgroundPalette = [];
 
     installFramePanel();
     video.addEventListener("loadedmetadata", updateSourceAspect);
@@ -839,6 +935,21 @@
         restartAnimationPreview(readSettings(), { nextDelayMs: 16 });
       }
     });
+    bgToleranceInput.addEventListener("input", () => {
+      bgToleranceValue.textContent = bgToleranceInput.value;
+    });
+    bgSoftnessInput.addEventListener("input", () => {
+      bgSoftnessValue.textContent = bgSoftnessInput.value;
+    });
+    bgColorInput.addEventListener("input", renderBackgroundPalette);
+    removeBgInput.addEventListener("change", () => {
+      if (rawFrames.length > 0) applyBackgroundRemovalToFrames();
+    });
+    applyBgButton.addEventListener("click", applyBackgroundRemovalToFrames);
+    resetBgButton.addEventListener("click", () => {
+      removeBgInput.checked = false;
+      applyBackgroundRemovalToFrames();
+    });
     playPauseButton.addEventListener("click", () => {
       if (!selectedFrames.length) return;
       isPreviewPlaying = !isPreviewPlaying;
@@ -899,10 +1010,13 @@
         const time = Math.min(video.duration, i * stepMs / 1000);
         statusEl.textContent = `擷取原始幀 ${i + 1} / ${totalSamples}`;
         const frame = await captureFrame(video, time, settings.width, settings.height, settings.scaleMode);
-        rawFrames.push({ index: i, timeMs: Math.round(time * 1000), canvas: frame });
+        rawFrames.push({ index: i, timeMs: Math.round(time * 1000), canvas: frame, originalCanvas: cloneCanvas(frame) });
       }
 
       statusEl.textContent = "分析每幀差異...";
+      buildBackgroundPalette();
+      applyBackgroundRemovalToFrames({ skipRefresh: true });
+
       const scores = calculateScores(rawFrames);
       rawFrames.forEach((frame, index) => {
         frame.score = scores[index];
@@ -917,6 +1031,8 @@
       selectAllButton.disabled = false;
       clearSelectionButton.disabled = false;
       autoSuggestButton.disabled = false;
+      applyBgButton.disabled = false;
+      resetBgButton.disabled = false;
       downloadSheet.disabled = true;
       downloadJson.disabled = true;
       downloadReport.disabled = true;
@@ -937,6 +1053,10 @@
         height: intValue("#heightInput", 256),
         padding: intValue("#paddingInput", 0),
         scaleMode: document.querySelector("#scaleModeInput").value,
+        removeBackground: removeBgInput.checked,
+        bgColor: bgColorInput.value,
+        bgTolerance: Number(bgToleranceInput.value) || 0,
+        bgSoftness: Number(bgSoftnessInput.value) || 0,
         previewSpeed: Math.max(0.1, Number(previewSpeedInput.value) || 1),
         previewTiming: previewTimingInput.value,
         minDistance: intValue("#distanceInput", 0),
@@ -1066,6 +1186,141 @@
       const dx = (targetWidth - dw) / 2;
       const dy = (targetHeight - dh) / 2;
       ctx.drawImage(source, dx, dy, dw, dh);
+    }
+
+    function cloneCanvas(source) {
+      const canvas = document.createElement("canvas");
+      canvas.width = source.width;
+      canvas.height = source.height;
+      canvas.getContext("2d").drawImage(source, 0, 0);
+      return canvas;
+    }
+
+    function applyBackgroundRemovalToFrames(options = {}) {
+      if (!rawFrames.length) return;
+      const settings = readSettings();
+      rawFrames.forEach(frame => {
+        const original = frame.originalCanvas || frame.canvas;
+        frame.originalCanvas = original;
+        frame.canvas = settings.removeBackground
+          ? removeBackgroundByColor(original, settings)
+          : cloneCanvas(original);
+      });
+
+      if (options.skipRefresh) return;
+
+      const scores = calculateScores(rawFrames);
+      rawFrames.forEach((frame, index) => {
+        frame.score = scores[index];
+      });
+
+      if (selectedFrameIndexes.size > 0) {
+        updateSelectedOutputs({ preservePlayback: isPreviewPlaying, nextDelayMs: 16 });
+      } else {
+        renderTimeline();
+      }
+      renderBackgroundPalette();
+      statusEl.textContent = settings.removeBackground
+        ? `Background key applied: ${settings.bgColor} / tolerance ${settings.bgTolerance} / softness ${settings.bgSoftness}`
+        : "Background key reset";
+    }
+
+    function removeBackgroundByColor(source, settings) {
+      const canvas = cloneCanvas(source);
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = image.data;
+      const key = hexToRgb(settings.bgColor);
+      const tolerance = Math.max(0, settings.bgTolerance);
+      const softness = Math.max(0, settings.bgSoftness);
+      const fadeEnd = tolerance + softness;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const dr = data[i] - key.r;
+        const dg = data[i + 1] - key.g;
+        const db = data[i + 2] - key.b;
+        const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+        if (distance <= tolerance) {
+          data[i + 3] = 0;
+        } else if (softness > 0 && distance < fadeEnd) {
+          const alphaRatio = (distance - tolerance) / softness;
+          data[i + 3] = Math.round(data[i + 3] * alphaRatio);
+        }
+      }
+
+      ctx.putImageData(image, 0, 0);
+      return canvas;
+    }
+
+    function buildBackgroundPalette() {
+      backgroundPalette = rawFrames.length ? sampleEdgePalette(rawFrames[0].originalCanvas || rawFrames[0].canvas) : [];
+      if (backgroundPalette.length > 0) {
+        bgColorInput.value = backgroundPalette[0];
+      }
+      renderBackgroundPalette();
+    }
+
+    function renderBackgroundPalette() {
+      bgPalette.innerHTML = "";
+      const colors = backgroundPalette.length ? backgroundPalette : [bgColorInput.value];
+      colors.forEach(color => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `swatch${color.toLowerCase() === bgColorInput.value.toLowerCase() ? " is-active" : ""}`;
+        button.style.setProperty("--swatch-color", color);
+        button.title = color;
+        button.addEventListener("click", () => {
+          bgColorInput.value = color;
+          renderBackgroundPalette();
+          if (removeBgInput.checked && rawFrames.length > 0) {
+            applyBackgroundRemovalToFrames();
+          }
+        });
+        bgPalette.append(button);
+      });
+    }
+
+    function sampleEdgePalette(canvas) {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const counts = new Map();
+      const step = Math.max(1, Math.floor(Math.min(canvas.width, canvas.height) / 32));
+      const addPixel = (x, y) => {
+        const index = (y * canvas.width + x) * 4;
+        if (data[index + 3] < 16) return;
+        const r = Math.round(data[index] / 16) * 16;
+        const g = Math.round(data[index + 1] / 16) * 16;
+        const b = Math.round(data[index + 2] / 16) * 16;
+        const key = rgbToHex(r, g, b);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      };
+
+      for (let x = 0; x < canvas.width; x += step) {
+        addPixel(x, 0);
+        addPixel(x, canvas.height - 1);
+      }
+      for (let y = 0; y < canvas.height; y += step) {
+        addPixel(0, y);
+        addPixel(canvas.width - 1, y);
+      }
+
+      return [...counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([color]) => color);
+    }
+
+    function hexToRgb(hex) {
+      const value = hex.replace("#", "");
+      return {
+        r: parseInt(value.slice(0, 2), 16),
+        g: parseInt(value.slice(2, 4), 16),
+        b: parseInt(value.slice(4, 6), 16)
+      };
+    }
+
+    function rgbToHex(r, g, b) {
+      return `#${[r, g, b].map(value => Math.max(0, Math.min(255, value)).toString(16).padStart(2, "0")).join("")}`;
     }
 
     function calculateScores(frames) {
@@ -1612,7 +1867,13 @@
           frame_width: settings.width,
           frame_height: settings.height,
           padding: settings.padding,
-          scale_mode: settings.scaleMode
+          scale_mode: settings.scaleMode,
+          background_removal: {
+            enabled: settings.removeBackground,
+            key_color: settings.bgColor,
+            tolerance: settings.bgTolerance,
+            softness: settings.bgSoftness
+          }
         },
         animation: {
           loop: settings.loop,
@@ -1668,6 +1929,7 @@
       selectedFrames = [];
       selectedSheetOrder = null;
       unselectedSheetFrames = new Set();
+      backgroundPalette = [];
       currentPreviewOrder = 0;
       isPreviewPlaying = true;
       timingData = null;
@@ -1685,9 +1947,12 @@
       stopAnimationPreview();
       clearAnimationCanvas();
       updatePlaybar();
+      renderBackgroundPalette();
       selectAllButton.disabled = true;
       clearSelectionButton.disabled = true;
       autoSuggestButton.disabled = true;
+      applyBgButton.disabled = true;
+      resetBgButton.disabled = true;
       downloadSheet.disabled = true;
       downloadJson.disabled = true;
       downloadReport.disabled = true;

@@ -1,5 +1,12 @@
 # Sprite Motion Reducer
 
+## Current HTML Tool
+
+- Open `index.html` directly, or use the GitHub Pages build.
+- Extract frames from an input video, manually select frames, preview the selected animation, and export the sprite sheet / timing JSON / report.
+- `Remove Background` adds a color-key workflow: choose a key color from the generated edge palette or color picker, tune `Tolerance` and `Softness`, then press `Apply Key`.
+- Background removal is non-destructive. The original extracted frames are kept internally, so changing the key settings does not require re-extracting the video.
+
 把短角色動作影片或 GIF 轉成低幀數 Sprite Sheet，並輸出 Unity 可用的每幀播放時間資料。
 
 ## HTML 版
