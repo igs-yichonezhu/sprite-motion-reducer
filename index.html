@@ -854,6 +854,7 @@
     let selectedSheetOrder = null;
     let unselectedSheetFrames = new Set();
     let backgroundPalette = [];
+    let outputCanvasCache = new Map();
 
     installFramePanel();
     video.addEventListener("loadedmetadata", updateSourceAspect);
@@ -937,18 +938,23 @@
     });
     bgToleranceInput.addEventListener("input", () => {
       bgToleranceValue.textContent = bgToleranceInput.value;
+      refreshBackgroundPreview();
     });
     bgSoftnessInput.addEventListener("input", () => {
       bgSoftnessValue.textContent = bgSoftnessInput.value;
+      refreshBackgroundPreview();
     });
-    bgColorInput.addEventListener("input", renderBackgroundPalette);
+    bgColorInput.addEventListener("input", () => {
+      renderBackgroundPalette();
+      refreshBackgroundPreview();
+    });
     removeBgInput.addEventListener("change", () => {
-      if (rawFrames.length > 0) applyBackgroundRemovalToFrames();
+      refreshBackgroundPreview();
     });
-    applyBgButton.addEventListener("click", applyBackgroundRemovalToFrames);
+    applyBgButton.addEventListener("click", refreshBackgroundPreview);
     resetBgButton.addEventListener("click", () => {
       removeBgInput.checked = false;
-      applyBackgroundRemovalToFrames();
+      refreshBackgroundPreview();
     });
     playPauseButton.addEventListener("click", () => {
       if (!selectedFrames.length) return;
@@ -1006,6 +1012,7 @@
       const totalSamples = Math.max(1, Math.floor(durationMs / stepMs) + 1);
 
       rawFrames = [];
+      outputCanvasCache.clear();
       for (let i = 0; i < totalSamples; i++) {
         const time = Math.min(video.duration, i * stepMs / 1000);
         statusEl.textContent = `擷取原始幀 ${i + 1} / ${totalSamples}`;
@@ -1015,8 +1022,6 @@
 
       statusEl.textContent = "分析每幀差異...";
       buildBackgroundPalette();
-      applyBackgroundRemovalToFrames({ skipRefresh: true });
-
       const scores = calculateScores(rawFrames);
       rawFrames.forEach((frame, index) => {
         frame.score = scores[index];
@@ -1196,33 +1201,32 @@
       return canvas;
     }
 
-    function applyBackgroundRemovalToFrames(options = {}) {
-      if (!rawFrames.length) return;
-      const settings = readSettings();
-      rawFrames.forEach(frame => {
-        const original = frame.originalCanvas || frame.canvas;
-        frame.originalCanvas = original;
-        frame.canvas = settings.removeBackground
-          ? removeBackgroundByColor(original, settings)
-          : cloneCanvas(original);
-      });
-
-      if (options.skipRefresh) return;
-
-      const scores = calculateScores(rawFrames);
-      rawFrames.forEach((frame, index) => {
-        frame.score = scores[index];
-      });
-
-      if (selectedFrameIndexes.size > 0) {
-        updateSelectedOutputs({ preservePlayback: isPreviewPlaying, nextDelayMs: 16 });
-      } else {
-        renderTimeline();
-      }
+    function refreshBackgroundPreview() {
       renderBackgroundPalette();
+      outputCanvasCache.clear();
+      if (!rawFrames.length) return;
+
+      const settings = readSettings();
+      if (selectedFrames.length > 0) {
+        renderPreviewFrame(settings);
+        renderSheet(settings);
+        buildTimingJson(fileInput.files[0] || { name: "manual_selection.mp4" }, settings, Math.max(1, Math.round(video.duration * 1000)));
+      }
+
       statusEl.textContent = settings.removeBackground
-        ? `Background key applied: ${settings.bgColor} / tolerance ${settings.bgTolerance} / softness ${settings.bgSoftness}`
-        : "Background key reset";
+        ? `Output key preview: ${settings.bgColor} / tolerance ${settings.bgTolerance} / softness ${settings.bgSoftness}`
+        : "Output key disabled";
+    }
+
+    function outputCanvasForFrame(frame, settings = readSettings()) {
+      const source = frame.originalCanvas || frame.canvas;
+      if (!settings.removeBackground) return source;
+
+      const cacheKey = `${frame.sourceFrame ?? frame.index}|${settings.bgColor}|${settings.bgTolerance}|${settings.bgSoftness}`;
+      if (!outputCanvasCache.has(cacheKey)) {
+        outputCanvasCache.set(cacheKey, removeBackgroundByColor(source, settings));
+      }
+      return outputCanvasCache.get(cacheKey);
     }
 
     function removeBackgroundByColor(source, settings) {
@@ -1273,7 +1277,7 @@
           bgColorInput.value = color;
           renderBackgroundPalette();
           if (removeBgInput.checked && rawFrames.length > 0) {
-            applyBackgroundRemovalToFrames();
+            refreshBackgroundPreview();
           }
         });
         bgPalette.append(button);
@@ -1423,7 +1427,7 @@
         const x = frame.sheetX * (settings.width + settings.padding);
         const y = frame.sheetY * (settings.height + settings.padding);
         const checked = !unselectedSheetFrames.has(frame.sourceFrame);
-        ctx.drawImage(frame.canvas, x, y, settings.width, settings.height);
+        ctx.drawImage(outputCanvasForFrame(frame, settings), x, y, settings.width, settings.height);
         if (!checked) {
           ctx.fillStyle = "rgba(255, 253, 247, .62)";
           ctx.fillRect(x, y, settings.width, settings.height);
@@ -1622,7 +1626,8 @@
           tags,
           score: rawFrames[sourceFrame].score || 0,
           locked: settings.locked.has(sourceFrame),
-          canvas: rawFrames[sourceFrame].canvas
+          canvas: rawFrames[sourceFrame].canvas,
+          originalCanvas: rawFrames[sourceFrame].originalCanvas || rawFrames[sourceFrame].canvas
         };
       });
       const selectedIndexSet = new Set(selectedIndexes);
@@ -1701,7 +1706,7 @@
       const frame = selectedFrames[currentPreviewOrder];
       const ctx = animationCanvas.getContext("2d");
       ctx.clearRect(0, 0, animationCanvas.width, animationCanvas.height);
-      ctx.drawImage(frame.canvas, 0, 0, settings.width, settings.height);
+      ctx.drawImage(outputCanvasForFrame(frame, settings), 0, 0, settings.width, settings.height);
       renderSheet(settings);
       updatePlaybar();
     }
@@ -1802,7 +1807,7 @@
       const frame = frames[currentPreviewOrder];
       const ctx = animationCanvas.getContext("2d");
       ctx.clearRect(0, 0, animationCanvas.width, animationCanvas.height);
-      ctx.drawImage(frame.canvas, 0, 0, settings.width, settings.height);
+      ctx.drawImage(outputCanvasForFrame(frame, settings), 0, 0, settings.width, settings.height);
       renderSheet(settings);
       updatePlaybar();
     }
@@ -1930,6 +1935,7 @@
       selectedSheetOrder = null;
       unselectedSheetFrames = new Set();
       backgroundPalette = [];
+      outputCanvasCache.clear();
       currentPreviewOrder = 0;
       isPreviewPlaying = true;
       timingData = null;
