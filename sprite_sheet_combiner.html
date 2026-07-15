@@ -77,11 +77,16 @@
     .frame-editor { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:10px; padding:14px; }
     .frame-card { min-width:0; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:white; transition:.15s ease; }
     .frame-card.inactive { opacity:.45; background:#eeeae1; }
+    .frame-card[draggable="true"] { cursor:grab; }
+    .frame-card.dragging { opacity:.25; }
+    .frame-card.drop-target { border-color:var(--gold); box-shadow:0 0 0 3px rgba(226,165,46,.2); }
     .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; }
     .frame-card-info { padding:7px 8px 4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .copy-control { display:grid; grid-template-columns:34px minmax(0,1fr) 34px; align-items:center; gap:5px; padding:4px 7px 8px; }
     .copy-control button { padding:5px; line-height:1; font-size:18px; }
     .copy-count { text-align:center; font-weight:800; color:var(--teal); }
+    .move-control { display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:0 7px 8px; }
+    .move-control button { padding:6px 4px; font-size:11px; }
     @media(max-width:1050px) { .layout,.preview-grid { grid-template-columns:1fr; } }
     @media(max-width:620px) {
       .page { padding:14px; } .topbar { flex-direction:column; } .settings-grid,.summary { grid-template-columns:1fr; }
@@ -164,6 +169,7 @@
         <div class="editor-actions">
           <button id="removeAdjacentDuplicates" class="ghost" disabled>移除相鄰重複</button>
           <button id="resetFrameCounts" class="ghost" disabled>全部重設為 1 張</button>
+          <button id="resetFrameOrder" class="ghost" disabled>回復原始順序</button>
         </div>
       </div>
       <div id="frameEditor" class="frame-editor"><div class="empty-note">匯入包圖後會在這裡顯示每一格。</div></div>
@@ -194,6 +200,7 @@
     const frameEditor = $("#frameEditor");
     const removeAdjacentDuplicates = $("#removeAdjacentDuplicates");
     const resetFrameCounts = $("#resetFrameCounts");
+    const resetFrameOrder = $("#resetFrameOrder");
 
     let sheets = [];
     let frames = [];
@@ -201,6 +208,8 @@
     let playing = false;
     let playbackTimer = 0;
     let nextSheetId = 1;
+    let sequenceOrder = [];
+    let draggedFrameKey = "";
 
     sheetFiles.addEventListener("change", () => importFiles([...sheetFiles.files]));
     dropzone.addEventListener("dragover", event => { event.preventDefault(); dropzone.classList.add("dragover"); });
@@ -215,8 +224,8 @@
       if (!button) return;
       const index = sheets.findIndex(sheet => sheet.id === Number(button.dataset.id));
       if (index < 0) return;
-      if (button.dataset.action === "up" && index > 0) [sheets[index - 1], sheets[index]] = [sheets[index], sheets[index - 1]];
-      if (button.dataset.action === "down" && index < sheets.length - 1) [sheets[index + 1], sheets[index]] = [sheets[index], sheets[index + 1]];
+      if (button.dataset.action === "up" && index > 0) { [sheets[index - 1], sheets[index]] = [sheets[index], sheets[index - 1]]; resetSequenceOrder(); }
+      if (button.dataset.action === "down" && index < sheets.length - 1) { [sheets[index + 1], sheets[index]] = [sheets[index], sheets[index + 1]]; resetSequenceOrder(); }
       if (button.dataset.action === "remove") { URL.revokeObjectURL(sheets[index].url); sheets.splice(index, 1); }
       rebuild();
     });
@@ -241,6 +250,11 @@
     downloadJson.addEventListener("click", downloadManifest);
     clearAll.addEventListener("click", clearSheets);
     frameEditor.addEventListener("click", event => {
+      const moveButton = event.target.closest("button[data-move-delta]");
+      if (moveButton) {
+        moveSequenceItem(moveButton.dataset.sequenceKey, Number(moveButton.dataset.moveDelta));
+        return;
+      }
       const button = event.target.closest("button[data-copy-delta]");
       if (!button) return;
       const sheet = sheets.find(item => item.id === Number(button.dataset.sheetId));
@@ -249,11 +263,35 @@
       entry.copies = clampInt(entry.copies + Number(button.dataset.copyDelta), 0, 99, entry.copies);
       rebuild();
     });
+    frameEditor.addEventListener("dragstart", event => {
+      const card = event.target.closest(".frame-card[data-sequence-key]");
+      if (!card) return;
+      draggedFrameKey = card.dataset.sequenceKey;
+      card.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+    });
+    frameEditor.addEventListener("dragover", event => {
+      const card = event.target.closest(".frame-card[data-sequence-key]");
+      if (!card || card.dataset.sequenceKey === draggedFrameKey) return;
+      event.preventDefault();
+      frameEditor.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
+      card.classList.add("drop-target");
+    });
+    frameEditor.addEventListener("drop", event => {
+      const card = event.target.closest(".frame-card[data-sequence-key]");
+      event.preventDefault();
+      if (card && draggedFrameKey && card.dataset.sequenceKey !== draggedFrameKey) moveSequenceAfter(draggedFrameKey,card.dataset.sequenceKey);
+    });
+    frameEditor.addEventListener("dragend", () => {
+      draggedFrameKey = "";
+      frameEditor.querySelectorAll(".dragging,.drop-target").forEach(item => item.classList.remove("dragging","drop-target"));
+    });
     resetFrameCounts.addEventListener("click", () => {
       sheets.forEach(sheet => sheet.slots.forEach(entry => { entry.copies = 1; }));
       rebuild();
     });
     removeAdjacentDuplicates.addEventListener("click", removeDuplicateNeighbors);
+    resetFrameOrder.addEventListener("click", () => { resetSequenceOrder(); rebuild(); });
 
     async function importFiles(files) {
       if (!files.length) return;
@@ -310,14 +348,57 @@
       return false;
     }
 
+    function sequenceKey(sheet,entry) { return `${sheet.id}:${entry.slot}`; }
+
+    function defaultSequenceOrder() {
+      return sheets.flatMap(sheet => sheet.slots.map(entry => sequenceKey(sheet,entry)));
+    }
+
+    function syncSequenceOrder() {
+      const defaults = defaultSequenceOrder();
+      const valid = new Set(defaults);
+      sequenceOrder = sequenceOrder.filter(key => valid.has(key));
+      const present = new Set(sequenceOrder);
+      defaults.forEach(key => { if (!present.has(key)) sequenceOrder.push(key); });
+    }
+
+    function resetSequenceOrder() { sequenceOrder = defaultSequenceOrder(); }
+
+    function orderedEntries() {
+      syncSequenceOrder();
+      const entries = new Map();
+      sheets.forEach(sheet => sheet.slots.forEach((entry,sourceOrder) => entries.set(sequenceKey(sheet,entry),{sheet,entry,sourceOrder})));
+      return sequenceOrder.map(key => ({key,...entries.get(key)})).filter(item => item.sheet);
+    }
+
+    function moveSequenceItem(key,delta) {
+      syncSequenceOrder();
+      const index = sequenceOrder.indexOf(key);
+      const target = Math.min(sequenceOrder.length-1,Math.max(0,index+delta));
+      if (index < 0 || index === target) return;
+      sequenceOrder.splice(index,1);
+      sequenceOrder.splice(target,0,key);
+      rebuild();
+    }
+
+    function moveSequenceAfter(key,targetKey) {
+      syncSequenceOrder();
+      const sourceIndex = sequenceOrder.indexOf(key);
+      if (sourceIndex < 0) return;
+      sequenceOrder.splice(sourceIndex,1);
+      const targetIndex = sequenceOrder.indexOf(targetKey);
+      sequenceOrder.splice(targetIndex+1,0,key);
+      rebuild();
+    }
+
     function rebuild() {
       stopPlayback();
-      frames = sheets.flatMap(sheet => {
+      frames = orderedEntries().flatMap(({sheet,entry,sourceOrder}) => {
         const width = sheet.width / sheet.cols;
         const height = sheet.height / sheet.rows;
-        return sheet.slots.flatMap((entry,sourceOrder) => Array.from({length:entry.copies},(_,copyOrder) => ({
+        return Array.from({length:entry.copies},(_,copyOrder) => ({
           sheet,sourceOrder,copyOrder,slot:entry.slot,col:entry.slot%sheet.cols,row:Math.floor(entry.slot/sheet.cols),width,height
-        })));
+        }));
       });
       currentFrame = Math.min(currentFrame,Math.max(0,frames.length-1));
       renderSheetList(); renderFrameEditor(); renderAtlas(); showFrame(currentFrame); updateSummary(); updateControls();
@@ -349,19 +430,23 @@
     }
 
     function renderFrameEditor() {
-      const entries = sheets.flatMap(sheet => sheet.slots.map((entry,sourceOrder) => ({sheet,entry,sourceOrder})));
+      const entries = orderedEntries();
       if (!entries.length) {
         frameEditor.innerHTML = '<div class="empty-note">匯入包圖後會在這裡顯示每一格。</div>';
         return;
       }
-      frameEditor.innerHTML = entries.map(({sheet,entry,sourceOrder},index) => `
-        <article class="frame-card ${entry.copies === 0 ? "inactive" : ""}">
+      frameEditor.innerHTML = entries.map(({key,sheet,entry,sourceOrder},index) => `
+        <article class="frame-card ${entry.copies === 0 ? "inactive" : ""}" draggable="true" data-sequence-key="${key}" title="拖到另一格上，會放到該格後面">
           <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112"></canvas>
           <div class="frame-card-info" title="${escapeHtml(sheet.name)}">${index + 1}. ${escapeHtml(sheet.name)} · 格 ${sourceOrder + 1}</div>
           <div class="copy-control">
             <button class="ghost" data-copy-delta="-1" data-sheet-id="${sheet.id}" data-slot="${entry.slot}" ${entry.copies === 0 ? "disabled" : ""} aria-label="減少第 ${index + 1} 格">−</button>
             <div class="copy-count">${entry.copies} 張</div>
             <button class="ghost" data-copy-delta="1" data-sheet-id="${sheet.id}" data-slot="${entry.slot}" aria-label="增加第 ${index + 1} 格">＋</button>
+          </div>
+          <div class="move-control">
+            <button class="ghost" data-move-delta="-1" data-sequence-key="${key}" ${index === 0 ? "disabled" : ""} aria-label="前移第 ${index + 1} 格">← 前移</button>
+            <button class="ghost" data-move-delta="1" data-sequence-key="${key}" ${index === entries.length - 1 ? "disabled" : ""} aria-label="後移第 ${index + 1} 格">後移 →</button>
           </div>
         </article>`).join("");
       window.requestAnimationFrame(drawFrameThumbnails);
@@ -434,7 +519,7 @@
     function stopPlayback(reset=true) { window.clearTimeout(playbackTimer); playbackTimer=0; if(reset) playing=false; updateControls(); }
 
     function removeDuplicateNeighbors() {
-      const entries = sheets.flatMap(sheet => sheet.slots.map(entry => ({sheet,entry})));
+      const entries = orderedEntries();
       let previous = null;
       let removed = 0;
       entries.forEach(item => {
@@ -464,6 +549,7 @@
       downloadPng.disabled=!ready; downloadJson.disabled=!ready; clearAll.disabled=sheets.length===0;
       removeAdjacentDuplicates.disabled=sheets.length===0;
       resetFrameCounts.disabled=sheets.length===0;
+      resetFrameOrder.disabled=sheets.length===0;
     }
 
     function updateSummary() {
@@ -485,7 +571,7 @@
     function downloadManifest() { if(frames.length) downloadBlob(new Blob([JSON.stringify(buildManifest(),null,2)],{type:"application/json"}),"combined_sprite_sheet.json"); }
     function downloadCanvas(canvas,filename) { if(frames.length) canvas.toBlob(blob=>{if(blob) downloadBlob(blob,filename);},"image/png"); }
     function downloadBlob(blob,filename) { const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=filename; link.click(); window.setTimeout(()=>URL.revokeObjectURL(url),1000); }
-    function clearSheets() { sheets.forEach(sheet=>URL.revokeObjectURL(sheet.url)); sheets=[]; frames=[]; currentFrame=0; rebuild(); }
+    function clearSheets() { sheets.forEach(sheet=>URL.revokeObjectURL(sheet.url)); sheets=[]; frames=[]; sequenceOrder=[]; currentFrame=0; rebuild(); }
     function loadImage(url) { return new Promise((resolve,reject)=>{ const image=new Image(); image.onload=()=>resolve(image); image.onerror=()=>reject(new Error("圖片讀取失敗")); image.src=url; }); }
     function clampInt(value,min,max,fallback) { const number=Number.parseInt(value,10); return Number.isFinite(number)?Math.min(max,Math.max(min,number)):fallback; }
     function escapeHtml(value) { return value.replace(/[&<>"]/g,character=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[character]); }
