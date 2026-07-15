@@ -107,6 +107,23 @@
       font-size: 14px;
     }
 
+    .tool-link {
+      display: block;
+      margin: -6px 0 22px;
+      padding: 11px 13px;
+      border: 1px solid var(--accent-2);
+      border-radius: 8px;
+      background: rgba(16, 107, 104, .08);
+      color: var(--accent-2);
+      font-weight: 800;
+      text-decoration: none;
+    }
+
+    .tool-link:hover {
+      background: var(--accent-2);
+      color: white;
+    }
+
     .control {
       display: grid;
       gap: 8px;
@@ -580,6 +597,7 @@
     <aside>
       <h1>Sprite Motion Reducer</h1>
       <p class="subtitle">影片拉入後抽出全 frame，手動勾選需要的格，再匯出 Sprite Sheet 與 timing JSON。</p>
+      <a class="tool-link" href="./sprite_sheet_combiner.html">開啟 Sprite Sheet 合併器 →</a>
 
       <div class="control">
         <label for="fileInput">Input Video</label>

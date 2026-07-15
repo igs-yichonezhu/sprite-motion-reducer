@@ -6,6 +6,7 @@
 - Extract frames from an input video, manually select frames, preview the selected animation, and export the sprite sheet / timing JSON / report.
 - `Remove Background` adds an output-stage color-key workflow for the final selected sequence: choose a key color from the generated edge palette or color picker, then tune `Tolerance` and `Softness` while watching the selected animation / sprite sheet preview.
 - Background removal is non-destructive and does not modify the raw frame picker. The final preview and exported sprite sheet use the keyed result.
+- Open `sprite_sheet_combiner.html` to import multiple sprite sheets, auto-detect grids from names such as `4x2`, skip transparent cells, reorder sequences, preview them continuously, and export one combined PNG plus playback JSON.
 
 把短角色動作影片或 GIF 轉成低幀數 Sprite Sheet，並輸出 Unity 可用的每幀播放時間資料。
 
