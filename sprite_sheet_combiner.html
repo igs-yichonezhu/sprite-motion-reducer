@@ -80,13 +80,19 @@
     .frame-card[draggable="true"] { cursor:grab; }
     .frame-card.dragging { opacity:.25; }
     .frame-card.drop-target { border-color:var(--gold); box-shadow:0 0 0 3px rgba(226,165,46,.2); }
-    .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; }
+    .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+    .frame-card canvas:focus-visible { outline:3px solid var(--gold); outline-offset:-3px; }
     .frame-card-info { padding:7px 8px 4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .copy-control { display:grid; grid-template-columns:34px minmax(0,1fr) 34px; align-items:center; gap:5px; padding:4px 7px 8px; }
     .copy-control button { padding:5px; line-height:1; font-size:18px; }
     .copy-count { text-align:center; font-weight:800; color:var(--teal); }
     .move-control { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; padding:0 7px 8px; }
     .move-control button { padding:6px 4px; font-size:11px; }
+    .magnifier { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(15,13,11,.82); backdrop-filter:blur(4px); }
+    .magnifier[hidden] { display:none; }
+    .magnifier-card { display:grid; gap:10px; max-width:min(90vw,760px); max-height:90vh; padding:14px; border:1px solid rgba(255,255,255,.24); border-radius:12px; background:#24211d; box-shadow:0 24px 80px rgba(0,0,0,.45); }
+    .magnifier canvas { width:auto; height:auto; max-width:calc(90vw - 28px); max-height:calc(90vh - 76px); background-color:#29251f; }
+    .magnifier-label { color:white; font-size:13px; text-align:center; overflow-wrap:anywhere; }
     @media(max-width:1050px) { .layout,.preview-grid { grid-template-columns:1fr; } }
     @media(max-width:620px) {
       .page { padding:14px; } .topbar { flex-direction:column; } .settings-grid,.summary { grid-template-columns:1fr; }
@@ -176,6 +182,12 @@
     </section>
   </div>
   <canvas id="analysisCanvas" hidden></canvas>
+  <div id="magnifier" class="magnifier" hidden aria-hidden="true" role="dialog" aria-label="影格放大預覽">
+    <div class="magnifier-card">
+      <canvas id="magnifierCanvas"></canvas>
+      <div id="magnifierLabel" class="magnifier-label"></div>
+    </div>
+  </div>
 
   <script>
     const $ = selector => document.querySelector(selector);
@@ -201,6 +213,9 @@
     const removeAdjacentDuplicates = $("#removeAdjacentDuplicates");
     const resetFrameCounts = $("#resetFrameCounts");
     const resetFrameOrder = $("#resetFrameOrder");
+    const magnifier = $("#magnifier");
+    const magnifierCanvas = $("#magnifierCanvas");
+    const magnifierLabel = $("#magnifierLabel");
 
     let sheets = [];
     let frames = [];
@@ -211,6 +226,8 @@
     let nextSequenceItemId = 1;
     let sequenceOrder = [];
     let draggedFrameKey = "";
+    let magnifyTimer = 0;
+    let magnifyPointer = null;
 
     sheetFiles.addEventListener("change", () => importFiles([...sheetFiles.files]));
     dropzone.addEventListener("dragover", event => { event.preventDefault(); dropzone.classList.add("dragover"); });
@@ -291,6 +308,31 @@
       draggedFrameKey = "";
       frameEditor.querySelectorAll(".dragging,.drop-target").forEach(item => item.classList.remove("dragging","drop-target"));
     });
+    frameEditor.addEventListener("pointerdown", event => {
+      const canvas = event.target.closest("canvas[data-thumb-sheet]");
+      if (!canvas || event.button > 0) return;
+      cancelMagnifyTimer();
+      magnifyPointer = { id:event.pointerId, x:event.clientX, y:event.clientY, canvas };
+      magnifyTimer = window.setTimeout(() => {
+        if (!magnifyPointer || magnifyPointer.id !== event.pointerId) return;
+        showMagnifier(canvas);
+      },350);
+    });
+    frameEditor.addEventListener("pointermove", event => {
+      if (!magnifyPointer || magnifyPointer.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX-magnifyPointer.x,event.clientY-magnifyPointer.y) > 8) cancelMagnifyTimer();
+    });
+    frameEditor.addEventListener("contextmenu", event => {
+      if (event.target.closest("canvas[data-thumb-sheet]")) event.preventDefault();
+    });
+    frameEditor.addEventListener("keydown", event => {
+      const canvas = event.target.closest("canvas[data-thumb-sheet]");
+      if (canvas && event.key === "Enter") { event.preventDefault(); showMagnifier(canvas); }
+    });
+    document.addEventListener("pointerup", closeMagnifierAfterPointer);
+    document.addEventListener("pointercancel", closeMagnifierAfterPointer);
+    document.addEventListener("keydown", event => { if (event.key === "Escape") hideMagnifier(); });
+    magnifier.addEventListener("click", hideMagnifier);
     resetFrameCounts.addEventListener("click", () => {
       sequenceOrder.forEach(item => { item.copies = 1; });
       rebuild();
@@ -447,7 +489,7 @@
       }
       frameEditor.innerHTML = entries.map(({sequenceItem,sheet,entry,sourceOrder},index) => `
         <article class="frame-card ${sequenceItem.copies === 0 ? "inactive" : ""}" draggable="true" data-sequence-key="${sequenceItem.id}" title="拖到另一格上，會放到該格後面">
-          <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112"></canvas>
+          <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112" tabindex="0" aria-label="長按放大第 ${index + 1} 張影格"></canvas>
           <div class="frame-card-info" title="${escapeHtml(sheet.name)}">${index + 1}. ${escapeHtml(sheet.name)} · 格 ${sourceOrder + 1}</div>
           <div class="copy-control">
             <button class="ghost" data-copy-delta="-1" data-sequence-id="${sequenceItem.id}" ${sequenceItem.copies === 0 ? "disabled" : ""} aria-label="減少第 ${index + 1} 格">−</button>
@@ -477,6 +519,39 @@
         const drawHeight = height*scale;
         context.drawImage(sheet.image,(slot%sheet.cols)*width,Math.floor(slot/sheet.cols)*height,width,height,(canvas.width-drawWidth)/2,(canvas.height-drawHeight)/2,drawWidth,drawHeight);
       });
+    }
+
+    function cancelMagnifyTimer() {
+      window.clearTimeout(magnifyTimer);
+      magnifyTimer = 0;
+      magnifyPointer = null;
+    }
+
+    function closeMagnifierAfterPointer() {
+      cancelMagnifyTimer();
+      hideMagnifier();
+    }
+
+    function showMagnifier(canvas) {
+      const sheet = sheets.find(item => item.id === Number(canvas.dataset.thumbSheet));
+      const slot = Number(canvas.dataset.thumbSlot);
+      if (!sheet) return;
+      const width = sheet.width / sheet.cols;
+      const height = sheet.height / sheet.rows;
+      const entryIndex = sheet.slots.findIndex(entry => entry.slot === slot);
+      magnifierCanvas.width = Math.round(width);
+      magnifierCanvas.height = Math.round(height);
+      const context = magnifierCanvas.getContext("2d");
+      context.clearRect(0,0,magnifierCanvas.width,magnifierCanvas.height);
+      context.drawImage(sheet.image,(slot%sheet.cols)*width,Math.floor(slot/sheet.cols)*height,width,height,0,0,magnifierCanvas.width,magnifierCanvas.height);
+      magnifierLabel.textContent = `${sheet.name} · 第 ${entryIndex + 1} 格`;
+      magnifier.hidden = false;
+      magnifier.setAttribute("aria-hidden","false");
+    }
+
+    function hideMagnifier() {
+      magnifier.hidden = true;
+      magnifier.setAttribute("aria-hidden","true");
     }
 
     function atlasSettings() {
