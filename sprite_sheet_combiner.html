@@ -72,6 +72,16 @@
     .playbar input[type="range"] { flex:1; min-width:120px; accent-color:var(--teal); }
     .frame-readout { min-width:74px; color:var(--muted); font-size:12px; text-align:right; }
     .empty-note { padding:24px 10px; color:var(--muted); text-align:center; line-height:1.6; }
+    .frame-editor-panel { margin-top:18px; }
+    .editor-actions { display:flex; flex-wrap:wrap; gap:8px; }
+    .frame-editor { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:10px; padding:14px; }
+    .frame-card { min-width:0; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:white; transition:.15s ease; }
+    .frame-card.inactive { opacity:.45; background:#eeeae1; }
+    .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; }
+    .frame-card-info { padding:7px 8px 4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .copy-control { display:grid; grid-template-columns:34px minmax(0,1fr) 34px; align-items:center; gap:5px; padding:4px 7px 8px; }
+    .copy-control button { padding:5px; line-height:1; font-size:18px; }
+    .copy-count { text-align:center; font-weight:800; color:var(--teal); }
     @media(max-width:1050px) { .layout,.preview-grid { grid-template-columns:1fr; } }
     @media(max-width:620px) {
       .page { padding:14px; } .topbar { flex-direction:column; } .settings-grid,.summary { grid-template-columns:1fr; }
@@ -144,6 +154,20 @@
         </section>
       </div>
     </div>
+
+    <section class="panel frame-editor-panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">3. 調整每格張數</div>
+          <div class="status" style="text-align:left">減到 0 會從播放與輸出移除；增加可延長該動作的停留時間。</div>
+        </div>
+        <div class="editor-actions">
+          <button id="removeAdjacentDuplicates" class="ghost" disabled>移除相鄰重複</button>
+          <button id="resetFrameCounts" class="ghost" disabled>全部重設為 1 張</button>
+        </div>
+      </div>
+      <div id="frameEditor" class="frame-editor"><div class="empty-note">匯入包圖後會在這裡顯示每一格。</div></div>
+    </section>
   </div>
   <canvas id="analysisCanvas" hidden></canvas>
 
@@ -167,6 +191,9 @@
     const downloadPng = $("#downloadPng");
     const downloadJson = $("#downloadJson");
     const clearAll = $("#clearAll");
+    const frameEditor = $("#frameEditor");
+    const removeAdjacentDuplicates = $("#removeAdjacentDuplicates");
+    const resetFrameCounts = $("#resetFrameCounts");
 
     let sheets = [];
     let frames = [];
@@ -213,6 +240,20 @@
     downloadPng.addEventListener("click", () => downloadCanvas(atlasCanvas, "combined_sprite_sheet.png"));
     downloadJson.addEventListener("click", downloadManifest);
     clearAll.addEventListener("click", clearSheets);
+    frameEditor.addEventListener("click", event => {
+      const button = event.target.closest("button[data-copy-delta]");
+      if (!button) return;
+      const sheet = sheets.find(item => item.id === Number(button.dataset.sheetId));
+      const entry = sheet?.slots.find(item => item.slot === Number(button.dataset.slot));
+      if (!entry) return;
+      entry.copies = clampInt(entry.copies + Number(button.dataset.copyDelta), 0, 99, entry.copies);
+      rebuild();
+    });
+    resetFrameCounts.addEventListener("click", () => {
+      sheets.forEach(sheet => sheet.slots.forEach(entry => { entry.copies = 1; }));
+      rebuild();
+    });
+    removeAdjacentDuplicates.addEventListener("click", removeDuplicateNeighbors);
 
     async function importFiles(files) {
       if (!files.length) return;
@@ -241,8 +282,12 @@
     async function analyzeSheet(sheet) {
       const cellWidth = sheet.width / sheet.cols;
       const cellHeight = sheet.height / sheet.rows;
-      const scanWidth = Math.max(1, Math.round(cellWidth));
-      const scanHeight = Math.max(1, Math.round(cellHeight));
+      const scanWidth = Math.min(64, Math.max(1, Math.round(cellWidth)));
+      const scanHeight = Math.min(64, Math.max(1, Math.round(cellHeight)));
+      const previousCopies = new Map((sheet.slots || []).map(entry => [
+        typeof entry === "number" ? entry : entry.slot,
+        typeof entry === "number" ? 1 : entry.copies
+      ]));
       analysisCanvas.width = scanWidth;
       analysisCanvas.height = scanHeight;
       const context = analysisCanvas.getContext("2d", { willReadFrequently:true });
@@ -253,7 +298,9 @@
         context.clearRect(0,0,scanWidth,scanHeight);
         context.drawImage(sheet.image,col*cellWidth,row*cellHeight,cellWidth,cellHeight,0,0,scanWidth,scanHeight);
         const pixels = context.getImageData(0,0,scanWidth,scanHeight).data;
-        if (hasVisiblePixels(pixels)) slots.push(slot);
+        if (hasVisiblePixels(pixels)) {
+          slots.push({ slot, copies:previousCopies.get(slot) ?? 1, signature:Array.from(pixels) });
+        }
       }
       sheet.slots = slots;
     }
@@ -268,10 +315,12 @@
       frames = sheets.flatMap(sheet => {
         const width = sheet.width / sheet.cols;
         const height = sheet.height / sheet.rows;
-        return sheet.slots.map((slot,sourceOrder) => ({ sheet,sourceOrder,slot,col:slot%sheet.cols,row:Math.floor(slot/sheet.cols),width,height }));
+        return sheet.slots.flatMap((entry,sourceOrder) => Array.from({length:entry.copies},(_,copyOrder) => ({
+          sheet,sourceOrder,copyOrder,slot:entry.slot,col:entry.slot%sheet.cols,row:Math.floor(entry.slot/sheet.cols),width,height
+        })));
       });
       currentFrame = Math.min(currentFrame,Math.max(0,frames.length-1));
-      renderSheetList(); renderAtlas(); showFrame(currentFrame); updateSummary(); updateControls();
+      renderSheetList(); renderFrameEditor(); renderAtlas(); showFrame(currentFrame); updateSummary(); updateControls();
     }
 
     function renderSheetList() {
@@ -297,6 +346,41 @@
             </div>
           </div>
         </article>`).join("");
+    }
+
+    function renderFrameEditor() {
+      const entries = sheets.flatMap(sheet => sheet.slots.map((entry,sourceOrder) => ({sheet,entry,sourceOrder})));
+      if (!entries.length) {
+        frameEditor.innerHTML = '<div class="empty-note">匯入包圖後會在這裡顯示每一格。</div>';
+        return;
+      }
+      frameEditor.innerHTML = entries.map(({sheet,entry,sourceOrder},index) => `
+        <article class="frame-card ${entry.copies === 0 ? "inactive" : ""}">
+          <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112"></canvas>
+          <div class="frame-card-info" title="${escapeHtml(sheet.name)}">${index + 1}. ${escapeHtml(sheet.name)} · 格 ${sourceOrder + 1}</div>
+          <div class="copy-control">
+            <button class="ghost" data-copy-delta="-1" data-sheet-id="${sheet.id}" data-slot="${entry.slot}" ${entry.copies === 0 ? "disabled" : ""} aria-label="減少第 ${index + 1} 格">−</button>
+            <div class="copy-count">${entry.copies} 張</div>
+            <button class="ghost" data-copy-delta="1" data-sheet-id="${sheet.id}" data-slot="${entry.slot}" aria-label="增加第 ${index + 1} 格">＋</button>
+          </div>
+        </article>`).join("");
+      window.requestAnimationFrame(drawFrameThumbnails);
+    }
+
+    function drawFrameThumbnails() {
+      frameEditor.querySelectorAll("canvas[data-thumb-sheet]").forEach(canvas => {
+        const sheet = sheets.find(item => item.id === Number(canvas.dataset.thumbSheet));
+        const slot = Number(canvas.dataset.thumbSlot);
+        if (!sheet) return;
+        const width = sheet.width / sheet.cols;
+        const height = sheet.height / sheet.rows;
+        const context = canvas.getContext("2d");
+        context.clearRect(0,0,canvas.width,canvas.height);
+        const scale = Math.min(canvas.width/width,canvas.height/height);
+        const drawWidth = width*scale;
+        const drawHeight = height*scale;
+        context.drawImage(sheet.image,(slot%sheet.cols)*width,Math.floor(slot/sheet.cols)*height,width,height,(canvas.width-drawWidth)/2,(canvas.height-drawHeight)/2,drawWidth,drawHeight);
+      });
     }
 
     function atlasSettings() {
@@ -349,11 +433,37 @@
     }
     function stopPlayback(reset=true) { window.clearTimeout(playbackTimer); playbackTimer=0; if(reset) playing=false; updateControls(); }
 
+    function removeDuplicateNeighbors() {
+      const entries = sheets.flatMap(sheet => sheet.slots.map(entry => ({sheet,entry})));
+      let previous = null;
+      let removed = 0;
+      entries.forEach(item => {
+        if (item.entry.copies === 0) return;
+        if (previous && signatureDifference(previous.entry.signature,item.entry.signature) < .006) {
+          item.entry.copies = 0;
+          removed += 1;
+        } else {
+          previous = item;
+        }
+      });
+      rebuild();
+      outputStatus.textContent = removed ? `已移除 ${removed} 個相鄰重複格` : "沒有找到相鄰重複格";
+    }
+
+    function signatureDifference(left,right) {
+      if (!left || !right || left.length !== right.length) return 1;
+      let difference = 0;
+      for (let index=0; index<left.length; index++) difference += Math.abs(left[index]-right[index]);
+      return difference/(left.length*255);
+    }
+
     function updateControls() {
       const ready=frames.length>0;
       [prevFrame,nextFrame,playPause].forEach(button=>button.disabled=!ready);
       scrubber.disabled=!ready; scrubber.max=String(Math.max(0,frames.length-1)); playPause.textContent=playing?"暫停":"播放";
       downloadPng.disabled=!ready; downloadJson.disabled=!ready; clearAll.disabled=sheets.length===0;
+      removeAdjacentDuplicates.disabled=sheets.length===0;
+      resetFrameCounts.disabled=sheets.length===0;
     }
 
     function updateSummary() {
@@ -367,7 +477,7 @@
       return {
         version:1,image:"combined_sprite_sheet.png",columns:settings.cols,rows:Math.ceil(frames.length/settings.cols),
         cell_width:settings.cellWidth,cell_height:settings.cellHeight,padding:settings.padding,fps,loop:true,total_frames:frames.length,
-        sources:sheets.map(sheet=>({name:sheet.name,columns:sheet.cols,rows:sheet.rows,frames:sheet.slots.length})),
+        sources:sheets.map(sheet=>({name:sheet.name,columns:sheet.cols,rows:sheet.rows,detected_frames:sheet.slots.length,output_frames:sheet.slots.reduce((sum,entry)=>sum+entry.copies,0)})),
         frames:frames.map((frame,order)=>({order,source:frame.sheet.name,source_frame:frame.sourceOrder,source_slot:frame.slot,x:(order%settings.cols)*(settings.cellWidth+settings.padding),y:Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding),width:settings.cellWidth,height:settings.cellHeight,duration_ms:Math.round(1000/fps)}))
       };
     }
