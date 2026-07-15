@@ -81,12 +81,11 @@
     .frame-card.dragging { opacity:.25; }
     .frame-card.drop-target { border-color:var(--gold); box-shadow:0 0 0 3px rgba(226,165,46,.2); }
     .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none; }
-    .frame-card canvas:focus-visible { outline:3px solid var(--gold); outline-offset:-3px; }
     .frame-card-info { padding:7px 8px 4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .copy-control { display:grid; grid-template-columns:34px minmax(0,1fr) 34px; align-items:center; gap:5px; padding:4px 7px 8px; }
     .copy-control button { padding:5px; line-height:1; font-size:18px; }
     .copy-count { text-align:center; font-weight:800; color:var(--teal); }
-    .move-control { display:grid; grid-template-columns:1fr; gap:5px; padding:0 7px 8px; }
+    .move-control { display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:0 7px 8px; }
     .move-control button { padding:6px 4px; font-size:11px; }
     .magnifier { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(15,13,11,.82); backdrop-filter:blur(4px); }
     .magnifier[hidden] { display:none; }
@@ -226,8 +225,6 @@
     let nextSequenceItemId = 1;
     let sequenceOrder = [];
     let pointerDrag = null;
-    let magnifyTimer = 0;
-    let magnifyPointer = null;
 
     sheetFiles.addEventListener("change", () => importFiles([...sheetFiles.files]));
     dropzone.addEventListener("dragover", event => { event.preventDefault(); dropzone.classList.add("dragover"); });
@@ -268,6 +265,11 @@
     downloadJson.addEventListener("click", downloadManifest);
     clearAll.addEventListener("click", clearSheets);
     frameEditor.addEventListener("click", event => {
+      const zoomButton = event.target.closest("button[data-zoom-sheet]");
+      if (zoomButton) {
+        showMagnifier(zoomButton);
+        return;
+      }
       const duplicateButton = event.target.closest("button[data-duplicate-sequence]");
       if (duplicateButton) {
         duplicateSequenceItem(duplicateButton.dataset.duplicateSequence);
@@ -286,17 +288,10 @@
       const card = canvas.closest(".frame-card[data-sequence-key]");
       pointerDrag = { id:event.pointerId, x:event.clientX, y:event.clientY, key:card.dataset.sequenceKey, card, targetKey:"", active:false };
       canvas.setPointerCapture(event.pointerId);
-      cancelMagnifyTimer();
-      magnifyPointer = { id:event.pointerId, x:event.clientX, y:event.clientY, canvas };
-      magnifyTimer = window.setTimeout(() => {
-        if (!magnifyPointer || magnifyPointer.id !== event.pointerId) return;
-        showMagnifier(canvas);
-      },350);
     });
     frameEditor.addEventListener("pointermove", event => {
       if (!pointerDrag || pointerDrag.id !== event.pointerId) return;
       if (Math.hypot(event.clientX-pointerDrag.x,event.clientY-pointerDrag.y) <= 8) return;
-      cancelMagnifyTimer();
       pointerDrag.active = true;
       pointerDrag.card.classList.add("dragging");
       frameEditor.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
@@ -304,15 +299,8 @@
       pointerDrag.targetKey = target && target.dataset.sequenceKey !== pointerDrag.key ? target.dataset.sequenceKey : "";
       if (pointerDrag.targetKey) target.classList.add("drop-target");
     });
-    frameEditor.addEventListener("contextmenu", event => {
-      if (event.target.closest("canvas[data-thumb-sheet]")) event.preventDefault();
-    });
-    frameEditor.addEventListener("keydown", event => {
-      const canvas = event.target.closest("canvas[data-thumb-sheet]");
-      if (canvas && event.key === "Enter") { event.preventDefault(); showMagnifier(canvas); }
-    });
-    document.addEventListener("pointerup", event => closeMagnifierAfterPointer(event,true));
-    document.addEventListener("pointercancel", event => closeMagnifierAfterPointer(event,false));
+    document.addEventListener("pointerup", event => finishPointerDrag(event,true));
+    document.addEventListener("pointercancel", event => finishPointerDrag(event,false));
     document.addEventListener("keydown", event => { if (event.key === "Escape") hideMagnifier(); });
     magnifier.addEventListener("click", hideMagnifier);
     resetFrameCounts.addEventListener("click", () => {
@@ -461,7 +449,7 @@
       }
       frameEditor.innerHTML = entries.map(({sequenceItem,sheet,entry,sourceOrder},index) => `
         <article class="frame-card ${sequenceItem.copies === 0 ? "inactive" : ""}" data-sequence-key="${sequenceItem.id}" title="拖到另一格上，會放到該格後面">
-          <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112" tabindex="0" aria-label="長按放大第 ${index + 1} 張影格"></canvas>
+          <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112"></canvas>
           <div class="frame-card-info" title="${escapeHtml(sheet.name)}">${index + 1}. ${escapeHtml(sheet.name)} · 格 ${sourceOrder + 1}</div>
           <div class="copy-control">
             <button class="ghost" data-copy-delta="-1" data-sequence-id="${sequenceItem.id}" ${sequenceItem.copies === 0 ? "disabled" : ""} aria-label="減少第 ${index + 1} 格">−</button>
@@ -469,6 +457,7 @@
             <button class="ghost" data-copy-delta="1" data-sequence-id="${sequenceItem.id}" aria-label="增加第 ${index + 1} 格">＋</button>
           </div>
           <div class="move-control">
+            <button class="ghost" data-zoom-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" aria-label="放大第 ${index + 1} 格">🔍 放大</button>
             <button class="ghost" data-duplicate-sequence="${sequenceItem.id}" aria-label="複製第 ${index + 1} 格">複製一張</button>
           </div>
         </article>`).join("");
@@ -491,23 +480,15 @@
       });
     }
 
-    function cancelMagnifyTimer() {
-      window.clearTimeout(magnifyTimer);
-      magnifyTimer = 0;
-      magnifyPointer = null;
-    }
-
-    function closeMagnifierAfterPointer(event,shouldMove) {
+    function finishPointerDrag(event,shouldMove) {
       const drag = pointerDrag;
       pointerDrag = null;
-      cancelMagnifyTimer();
-      hideMagnifier();
       frameEditor.querySelectorAll(".dragging,.drop-target").forEach(item => item.classList.remove("dragging","drop-target"));
       if (shouldMove && drag?.active && drag.targetKey) moveSequenceAfter(drag.key,drag.targetKey);
     }
 
     function showMagnifier(canvas) {
-      const sheet = sheets.find(item => item.id === Number(canvas.dataset.thumbSheet));
+      const sheet = sheets.find(item => item.id === Number(canvas.dataset.zoomSheet));
       const slot = Number(canvas.dataset.thumbSlot);
       if (!sheet) return;
       const width = sheet.width / sheet.cols;
