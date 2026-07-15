@@ -57,7 +57,7 @@
     .card-actions { display:flex; flex-wrap:wrap; gap:6px; }
     .card-actions button { padding:6px 9px; font-size:12px; }
     .settings-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
-    .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:14px; }
+    .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px; }
     .metric { padding:12px; border:1px solid var(--line); border-radius:8px; text-align:center; }
     .metric b { display:block; color:var(--teal); font-size:22px; }
     .metric span { color:var(--muted); font-size:11px; }
@@ -134,7 +134,8 @@
             </div>
             <div class="summary">
               <div class="metric"><b id="sheetCount">0</b><span>包圖數</span></div>
-              <div class="metric"><b id="frameCount">0</b><span>總影格</span></div>
+              <div class="metric"><b id="atlasFrameCount">0</b><span>包圖影格</span></div>
+              <div class="metric"><b id="frameCount">0</b><span>播放影格</span></div>
               <div class="metric"><b id="durationCount">0.00s</b><span>播放長度</span></div>
             </div>
           </div>
@@ -170,7 +171,7 @@
       <div class="panel-head">
         <div>
           <div class="panel-title">3. 調整每格張數</div>
-          <div class="status" style="text-align:left">拖曳時依發光直線插入前方或後方；減到 0 會從播放與輸出移除。</div>
+          <div class="status" style="text-align:left">增加張數只延長播放，不會重複塞進包圖；拖曳時依發光直線插入。</div>
         </div>
         <div class="editor-actions">
           <button id="removeAdjacentDuplicates" class="ghost" disabled>移除相鄰重複</button>
@@ -416,7 +417,7 @@
         const width = sheet.width / sheet.cols;
         const height = sheet.height / sheet.rows;
         return Array.from({length:sequenceItem.copies},(_,copyOrder) => ({
-          sequenceItemId:sequenceItem.id,sheet,sourceOrder,copyOrder,slot:entry.slot,col:entry.slot%sheet.cols,row:Math.floor(entry.slot/sheet.cols),width,height
+          sourceKey:sourceKey(sheet,entry),sequenceItemId:sequenceItem.id,sheet,sourceOrder,copyOrder,slot:entry.slot,col:entry.slot%sheet.cols,row:Math.floor(entry.slot/sheet.cols),width,height
         }));
       });
       currentFrame = Math.min(currentFrame,Math.max(0,frames.length-1));
@@ -516,11 +517,20 @@
       magnifier.setAttribute("aria-hidden","true");
     }
 
-    function atlasSettings() {
+    function uniqueAtlasFrames() {
+      const seen = new Set();
+      return frames.filter(frame => {
+        if (seen.has(frame.sourceKey)) return false;
+        seen.add(frame.sourceKey);
+        return true;
+      });
+    }
+
+    function atlasSettings(atlasFrames=uniqueAtlasFrames()) {
       return {
         cols:clampInt(outputCols.value,1,32,4), padding:clampInt(outputPadding.value,0,64,0),
-        cellWidth:frames.length?Math.ceil(Math.max(...frames.map(frame=>frame.width))):1,
-        cellHeight:frames.length?Math.ceil(Math.max(...frames.map(frame=>frame.height))):1
+        cellWidth:atlasFrames.length?Math.ceil(Math.max(...atlasFrames.map(frame=>frame.width))):1,
+        cellHeight:atlasFrames.length?Math.ceil(Math.max(...atlasFrames.map(frame=>frame.height))):1
       };
     }
 
@@ -528,19 +538,20 @@
       if (!frames.length) {
         atlasCanvas.width=1; atlasCanvas.height=1; $("#atlasInfo").textContent="尚未產生"; outputStatus.textContent="等待影格"; return;
       }
-      const settings = atlasSettings();
-      const rows = Math.ceil(frames.length/settings.cols);
+      const packedFrames = uniqueAtlasFrames();
+      const settings = atlasSettings(packedFrames);
+      const rows = Math.ceil(packedFrames.length/settings.cols);
       const width = settings.cols*settings.cellWidth + Math.max(0,settings.cols-1)*settings.padding;
       const height = rows*settings.cellHeight + Math.max(0,rows-1)*settings.padding;
       atlasCanvas.width=width; atlasCanvas.height=height;
       const context=atlasCanvas.getContext("2d"); context.clearRect(0,0,width,height);
-      frames.forEach((frame,order) => {
+      packedFrames.forEach((frame,order) => {
         const x=(order%settings.cols)*(settings.cellWidth+settings.padding)+(settings.cellWidth-frame.width)/2;
         const y=Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding)+(settings.cellHeight-frame.height)/2;
         context.drawImage(frame.sheet.image,frame.col*frame.width,frame.row*frame.height,frame.width,frame.height,x,y,frame.width,frame.height);
       });
       $("#atlasInfo").textContent=`${settings.cols} 欄 × ${rows} 列 · ${width}×${height}`;
-      outputStatus.textContent=`${frames.length} 格已合併`;
+      outputStatus.textContent=`包圖 ${packedFrames.length} 格 · 播放 ${frames.length} 格`;
     }
 
     function showFrame(index) {
@@ -602,17 +613,18 @@
 
     function updateSummary() {
       const fps=clampInt(previewFps.value,1,60,8);
-      $("#sheetCount").textContent=String(sheets.length); $("#frameCount").textContent=String(frames.length);
+      $("#sheetCount").textContent=String(sheets.length); $("#atlasFrameCount").textContent=String(uniqueAtlasFrames().length); $("#frameCount").textContent=String(frames.length);
       $("#durationCount").textContent=`${(frames.length/fps).toFixed(2)}s`;
     }
 
     function buildManifest() {
-      const settings=atlasSettings(); const fps=clampInt(previewFps.value,1,60,8);
+      const packedFrames=uniqueAtlasFrames(); const settings=atlasSettings(packedFrames); const fps=clampInt(previewFps.value,1,60,8);
+      const atlasIndexes=new Map(packedFrames.map((frame,index)=>[frame.sourceKey,index]));
       return {
-        version:1,image:"combined_sprite_sheet.png",columns:settings.cols,rows:Math.ceil(frames.length/settings.cols),
-        cell_width:settings.cellWidth,cell_height:settings.cellHeight,padding:settings.padding,fps,loop:true,total_frames:frames.length,
+        version:2,image:"combined_sprite_sheet.png",columns:settings.cols,rows:Math.ceil(packedFrames.length/settings.cols),
+        cell_width:settings.cellWidth,cell_height:settings.cellHeight,padding:settings.padding,fps,loop:true,atlas_frames:packedFrames.length,total_frames:frames.length,
         sources:sheets.map(sheet=>({name:sheet.name,columns:sheet.cols,rows:sheet.rows,detected_frames:sheet.slots.length,output_frames:sequenceOrder.filter(item=>item.key.startsWith(`${sheet.id}:`)).reduce((sum,item)=>sum+item.copies,0)})),
-        frames:frames.map((frame,order)=>({order,source:frame.sheet.name,source_frame:frame.sourceOrder,source_slot:frame.slot,x:(order%settings.cols)*(settings.cellWidth+settings.padding),y:Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding),width:settings.cellWidth,height:settings.cellHeight,duration_ms:Math.round(1000/fps)}))
+        frames:frames.map((frame,order)=>{const atlasFrame=atlasIndexes.get(frame.sourceKey);return {order,atlas_frame:atlasFrame,source:frame.sheet.name,source_frame:frame.sourceOrder,source_slot:frame.slot,x:(atlasFrame%settings.cols)*(settings.cellWidth+settings.padding),y:Math.floor(atlasFrame/settings.cols)*(settings.cellHeight+settings.padding),width:settings.cellWidth,height:settings.cellHeight,duration_ms:Math.round(1000/fps)};})
       };
     }
 
