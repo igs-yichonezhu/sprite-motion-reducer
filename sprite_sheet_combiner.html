@@ -68,8 +68,16 @@
     }
     canvas { display:block; width:auto; height:auto; max-width:100%; max-height:68vh; }
     #animationCanvas { max-height:430px; }
-    .playbar,.download-bar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 14px; border-top:1px solid var(--line); }
+    .crop-stage { position:relative; display:inline-block; max-width:100%; overflow:hidden; line-height:0; }
+    .crop-box { position:absolute; z-index:2; border:3px solid var(--gold); box-shadow:0 0 0 9999px rgba(8,7,5,.58),0 0 16px rgba(226,165,46,.9); cursor:move; touch-action:none; }
+    .crop-box.full { cursor:crosshair; }
+    .crop-box[hidden] { display:none; }
+    .crop-handle { position:absolute; right:-9px; bottom:-9px; width:18px; height:18px; border:3px solid white; border-radius:50%; background:var(--gold); box-shadow:0 2px 8px rgba(0,0,0,.45); cursor:nwse-resize; }
+    .playbar,.download-bar,.cropbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:12px 14px; border-top:1px solid var(--line); }
     .playbar input[type="range"] { flex:1; min-width:120px; accent-color:var(--teal); }
+    .cropbar { padding-top:10px; padding-bottom:10px; }
+    .cropbar button { padding:7px 10px; font-size:12px; }
+    .crop-info { flex:1; min-width:120px; color:var(--muted); font-size:12px; text-align:right; }
     .frame-readout { min-width:74px; color:var(--muted); font-size:12px; text-align:right; }
     .empty-note { padding:24px 10px; color:var(--muted); text-align:center; line-height:1.6; }
     .frame-editor-panel { margin-top:18px; }
@@ -145,13 +153,23 @@
       <div class="preview-grid">
         <section class="panel">
           <div class="panel-head"><div class="panel-title">連續播放</div><div id="animationInfo" class="status">0 / 0</div></div>
-          <div class="canvas-wrap"><canvas id="animationCanvas" width="512" height="512"></canvas></div>
+          <div class="canvas-wrap">
+            <div id="cropStage" class="crop-stage">
+              <canvas id="animationCanvas" width="512" height="512"></canvas>
+              <div id="cropBox" class="crop-box" hidden><span class="crop-handle" data-crop-handle aria-hidden="true"></span></div>
+            </div>
+          </div>
           <div class="playbar">
             <button id="prevFrame" class="ghost" disabled>上一格</button>
             <button id="playPause" class="secondary" disabled>播放</button>
             <button id="nextFrame" class="ghost" disabled>下一格</button>
             <input id="scrubber" type="range" min="0" max="0" value="0" disabled>
             <span id="frameReadout" class="frame-readout">0 / 0</span>
+          </div>
+          <div class="cropbar">
+            <button id="toggleCrop" class="ghost" disabled>調整裁切</button>
+            <button id="resetCrop" class="ghost" disabled>重設完整範圍</button>
+            <span id="cropInfo" class="crop-info">尚未設定</span>
           </div>
         </section>
 
@@ -201,6 +219,11 @@
     const previewFps = $("#previewFps");
     const outputPadding = $("#outputPadding");
     const animationCanvas = $("#animationCanvas");
+    const cropStage = $("#cropStage");
+    const cropBox = $("#cropBox");
+    const toggleCrop = $("#toggleCrop");
+    const resetCrop = $("#resetCrop");
+    const cropInfo = $("#cropInfo");
     const atlasCanvas = $("#atlasCanvas");
     const analysisCanvas = $("#analysisCanvas");
     const prevFrame = $("#prevFrame");
@@ -227,6 +250,9 @@
     let nextSequenceItemId = 1;
     let sequenceOrder = [];
     let pointerDrag = null;
+    let cropRegion = { x:0, y:0, width:1, height:1 };
+    let cropEditing = false;
+    let cropPointer = null;
 
     sheetFiles.addEventListener("change", () => importFiles([...sheetFiles.files]));
     dropzone.addEventListener("dragover", event => { event.preventDefault(); dropzone.classList.add("dragover"); });
@@ -263,6 +289,23 @@
     nextFrame.addEventListener("click", () => showFrame(currentFrame + 1));
     playPause.addEventListener("click", () => { playing = !playing; playing ? startPlayback() : stopPlayback(); updateControls(); });
     scrubber.addEventListener("input", () => showFrame(Number(scrubber.value)));
+    toggleCrop.addEventListener("click", () => {
+      cropEditing = !cropEditing;
+      stopPlayback();
+      showFrame(currentFrame);
+      renderAtlas();
+      updateControls();
+    });
+    resetCrop.addEventListener("click", () => {
+      cropRegion = { x:0, y:0, width:1, height:1 };
+      showFrame(currentFrame);
+      renderAtlas();
+      updateCropInfo();
+    });
+    cropStage.addEventListener("pointerdown", startCropPointer);
+    cropStage.addEventListener("pointermove", moveCropPointer);
+    cropStage.addEventListener("pointerup", finishCropPointer);
+    cropStage.addEventListener("pointercancel", finishCropPointer);
     downloadPng.addEventListener("click", () => downloadCanvas(atlasCanvas, "combined_sprite_sheet.png"));
     downloadJson.addEventListener("click", downloadManifest);
     clearAll.addEventListener("click", clearSheets);
@@ -517,6 +560,86 @@
       magnifier.setAttribute("aria-hidden","true");
     }
 
+    function cropPixels(frame) {
+      const x = Math.min(frame.width-1,Math.max(0,Math.round(cropRegion.x*frame.width)));
+      const y = Math.min(frame.height-1,Math.max(0,Math.round(cropRegion.y*frame.height)));
+      const width = Math.max(1,Math.min(frame.width-x,Math.round(cropRegion.width*frame.width)));
+      const height = Math.max(1,Math.min(frame.height-y,Math.round(cropRegion.height*frame.height)));
+      return { x,y,width,height };
+    }
+
+    function cropPoint(event) {
+      const bounds = cropStage.getBoundingClientRect();
+      return {
+        x:Math.min(1,Math.max(0,(event.clientX-bounds.left)/bounds.width)),
+        y:Math.min(1,Math.max(0,(event.clientY-bounds.top)/bounds.height))
+      };
+    }
+
+    function startCropPointer(event) {
+      if (!cropEditing || !frames.length || event.button > 0) return;
+      const point = cropPoint(event);
+      const resizing = Boolean(event.target.closest("[data-crop-handle]"));
+      const fullRegion = cropRegion.width > .995 && cropRegion.height > .995;
+      const moving = !resizing && !fullRegion && Boolean(event.target.closest("#cropBox"));
+      cropPointer = {
+        id:event.pointerId, mode:resizing?"resize":moving?"move":"create", start:point,
+        region:{...cropRegion}, offsetX:point.x-cropRegion.x, offsetY:point.y-cropRegion.y
+      };
+      cropStage.setPointerCapture(event.pointerId);
+      if (!resizing && !moving) cropRegion = { x:point.x, y:point.y, width:.02, height:.02 };
+      renderCropOverlay();
+      event.preventDefault();
+    }
+
+    function moveCropPointer(event) {
+      if (!cropPointer || cropPointer.id !== event.pointerId) return;
+      const point = cropPoint(event);
+      const minimum = .02;
+      if (cropPointer.mode === "move") {
+        cropRegion.x = Math.min(1-cropRegion.width,Math.max(0,point.x-cropPointer.offsetX));
+        cropRegion.y = Math.min(1-cropRegion.height,Math.max(0,point.y-cropPointer.offsetY));
+      } else if (cropPointer.mode === "resize") {
+        cropRegion.width = Math.max(minimum,Math.min(1-cropRegion.x,point.x-cropRegion.x));
+        cropRegion.height = Math.max(minimum,Math.min(1-cropRegion.y,point.y-cropRegion.y));
+      } else {
+        cropRegion.x = Math.min(cropPointer.start.x,point.x);
+        cropRegion.y = Math.min(cropPointer.start.y,point.y);
+        cropRegion.width = Math.max(minimum,Math.abs(point.x-cropPointer.start.x));
+        cropRegion.height = Math.max(minimum,Math.abs(point.y-cropPointer.start.y));
+        cropRegion.width = Math.min(cropRegion.width,1-cropRegion.x);
+        cropRegion.height = Math.min(cropRegion.height,1-cropRegion.y);
+      }
+      renderCropOverlay();
+      renderAtlas();
+      event.preventDefault();
+    }
+
+    function finishCropPointer(event) {
+      if (!cropPointer || cropPointer.id !== event.pointerId) return;
+      cropPointer = null;
+      renderCropOverlay();
+      renderAtlas();
+    }
+
+    function renderCropOverlay() {
+      cropBox.hidden = !cropEditing || !frames.length;
+      if (cropBox.hidden) return;
+      cropBox.style.left = `${cropRegion.x*100}%`;
+      cropBox.style.top = `${cropRegion.y*100}%`;
+      cropBox.style.width = `${cropRegion.width*100}%`;
+      cropBox.style.height = `${cropRegion.height*100}%`;
+      cropBox.classList.toggle("full",cropRegion.width>.995&&cropRegion.height>.995);
+      updateCropInfo();
+    }
+
+    function updateCropInfo() {
+      if (!frames.length) { cropInfo.textContent="尚未設定"; return; }
+      const crop = cropPixels(frames[currentFrame] || frames[0]);
+      const details = `${crop.width}×${crop.height} · 起點 ${crop.x}, ${crop.y}`;
+      cropInfo.textContent = cropEditing ? `拖曳框選｜${details}` : details;
+    }
+
     function uniqueAtlasFrames() {
       const seen = new Set();
       return frames.filter(frame => {
@@ -527,10 +650,11 @@
     }
 
     function atlasSettings(atlasFrames=uniqueAtlasFrames()) {
+      const crops = atlasFrames.map(cropPixels);
       return {
         cols:clampInt(outputCols.value,1,32,4), padding:clampInt(outputPadding.value,0,64,0),
-        cellWidth:atlasFrames.length?Math.ceil(Math.max(...atlasFrames.map(frame=>frame.width))):1,
-        cellHeight:atlasFrames.length?Math.ceil(Math.max(...atlasFrames.map(frame=>frame.height))):1
+        cellWidth:crops.length?Math.ceil(Math.max(...crops.map(crop=>crop.width))):1,
+        cellHeight:crops.length?Math.ceil(Math.max(...crops.map(crop=>crop.height))):1
       };
     }
 
@@ -546,9 +670,10 @@
       atlasCanvas.width=width; atlasCanvas.height=height;
       const context=atlasCanvas.getContext("2d"); context.clearRect(0,0,width,height);
       packedFrames.forEach((frame,order) => {
-        const x=(order%settings.cols)*(settings.cellWidth+settings.padding)+(settings.cellWidth-frame.width)/2;
-        const y=Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding)+(settings.cellHeight-frame.height)/2;
-        context.drawImage(frame.sheet.image,frame.col*frame.width,frame.row*frame.height,frame.width,frame.height,x,y,frame.width,frame.height);
+        const crop = cropPixels(frame);
+        const x=(order%settings.cols)*(settings.cellWidth+settings.padding)+(settings.cellWidth-crop.width)/2;
+        const y=Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding)+(settings.cellHeight-crop.height)/2;
+        context.drawImage(frame.sheet.image,frame.col*frame.width+crop.x,frame.row*frame.height+crop.y,crop.width,crop.height,x,y,crop.width,crop.height);
       });
       $("#atlasInfo").textContent=`${settings.cols} 欄 × ${rows} 列 · ${width}×${height}`;
       outputStatus.textContent=`包圖 ${packedFrames.length} 格 · 播放 ${frames.length} 格`;
@@ -561,12 +686,19 @@
       }
       currentFrame=(index+frames.length)%frames.length;
       const frame=frames[currentFrame];
-      animationCanvas.width=Math.round(frame.width); animationCanvas.height=Math.round(frame.height);
+      const crop=cropPixels(frame);
+      animationCanvas.width=Math.round(cropEditing?frame.width:crop.width); animationCanvas.height=Math.round(cropEditing?frame.height:crop.height);
       const context=animationCanvas.getContext("2d"); context.clearRect(0,0,animationCanvas.width,animationCanvas.height);
-      context.drawImage(frame.sheet.image,frame.col*frame.width,frame.row*frame.height,frame.width,frame.height,0,0,animationCanvas.width,animationCanvas.height);
+      if (cropEditing) {
+        context.drawImage(frame.sheet.image,frame.col*frame.width,frame.row*frame.height,frame.width,frame.height,0,0,animationCanvas.width,animationCanvas.height);
+      } else {
+        context.drawImage(frame.sheet.image,frame.col*frame.width+crop.x,frame.row*frame.height+crop.y,crop.width,crop.height,0,0,animationCanvas.width,animationCanvas.height);
+      }
       scrubber.value=String(currentFrame);
       $("#animationInfo").textContent=`${frame.sheet.name} · 第 ${frame.sourceOrder+1} 格`;
       $("#frameReadout").textContent=`${currentFrame+1} / ${frames.length}`;
+      window.requestAnimationFrame(renderCropOverlay);
+      updateCropInfo();
     }
 
     function startPlayback() {
@@ -603,12 +735,18 @@
 
     function updateControls() {
       const ready=frames.length>0;
-      [prevFrame,nextFrame,playPause].forEach(button=>button.disabled=!ready);
+      [prevFrame,nextFrame].forEach(button=>button.disabled=!ready);
+      playPause.disabled=!ready||cropEditing;
       scrubber.disabled=!ready; scrubber.max=String(Math.max(0,frames.length-1)); playPause.textContent=playing?"暫停":"播放";
+      toggleCrop.disabled=!ready; resetCrop.disabled=!ready;
+      toggleCrop.textContent=cropEditing?"完成裁切":"調整裁切";
+      toggleCrop.classList.toggle("secondary",cropEditing);
+      toggleCrop.classList.toggle("ghost",!cropEditing);
       downloadPng.disabled=!ready; downloadJson.disabled=!ready; clearAll.disabled=sheets.length===0;
       removeAdjacentDuplicates.disabled=sheets.length===0;
       resetFrameCounts.disabled=sheets.length===0;
       resetFrameOrder.disabled=sheets.length===0;
+      if (!ready) { cropEditing=false; cropBox.hidden=true; updateCropInfo(); }
     }
 
     function updateSummary() {
@@ -623,15 +761,16 @@
       return {
         version:2,image:"combined_sprite_sheet.png",columns:settings.cols,rows:Math.ceil(packedFrames.length/settings.cols),
         cell_width:settings.cellWidth,cell_height:settings.cellHeight,padding:settings.padding,fps,loop:true,atlas_frames:packedFrames.length,total_frames:frames.length,
+        crop:{x_ratio:cropRegion.x,y_ratio:cropRegion.y,width_ratio:cropRegion.width,height_ratio:cropRegion.height},
         sources:sheets.map(sheet=>({name:sheet.name,columns:sheet.cols,rows:sheet.rows,detected_frames:sheet.slots.length,output_frames:sequenceOrder.filter(item=>item.key.startsWith(`${sheet.id}:`)).reduce((sum,item)=>sum+item.copies,0)})),
-        frames:frames.map((frame,order)=>{const atlasFrame=atlasIndexes.get(frame.sourceKey);return {order,atlas_frame:atlasFrame,source:frame.sheet.name,source_frame:frame.sourceOrder,source_slot:frame.slot,x:(atlasFrame%settings.cols)*(settings.cellWidth+settings.padding),y:Math.floor(atlasFrame/settings.cols)*(settings.cellHeight+settings.padding),width:settings.cellWidth,height:settings.cellHeight,duration_ms:Math.round(1000/fps)};})
+        frames:frames.map((frame,order)=>{const atlasFrame=atlasIndexes.get(frame.sourceKey);const crop=cropPixels(frame);return {order,atlas_frame:atlasFrame,source:frame.sheet.name,source_frame:frame.sourceOrder,source_slot:frame.slot,source_crop_x:crop.x,source_crop_y:crop.y,source_crop_width:crop.width,source_crop_height:crop.height,x:(atlasFrame%settings.cols)*(settings.cellWidth+settings.padding),y:Math.floor(atlasFrame/settings.cols)*(settings.cellHeight+settings.padding),width:settings.cellWidth,height:settings.cellHeight,duration_ms:Math.round(1000/fps)};})
       };
     }
 
     function downloadManifest() { if(frames.length) downloadBlob(new Blob([JSON.stringify(buildManifest(),null,2)],{type:"application/json"}),"combined_sprite_sheet.json"); }
     function downloadCanvas(canvas,filename) { if(frames.length) canvas.toBlob(blob=>{if(blob) downloadBlob(blob,filename);},"image/png"); }
     function downloadBlob(blob,filename) { const url=URL.createObjectURL(blob); const link=document.createElement("a"); link.href=url; link.download=filename; link.click(); window.setTimeout(()=>URL.revokeObjectURL(url),1000); }
-    function clearSheets() { sheets.forEach(sheet=>URL.revokeObjectURL(sheet.url)); sheets=[]; frames=[]; sequenceOrder=[]; nextSequenceItemId=1; currentFrame=0; rebuild(); }
+    function clearSheets() { sheets.forEach(sheet=>URL.revokeObjectURL(sheet.url)); sheets=[]; frames=[]; sequenceOrder=[]; nextSequenceItemId=1; currentFrame=0; cropRegion={x:0,y:0,width:1,height:1}; cropEditing=false; rebuild(); }
     function loadImage(url) { return new Promise((resolve,reject)=>{ const image=new Image(); image.onload=()=>resolve(image); image.onerror=()=>reject(new Error("圖片讀取失敗")); image.src=url; }); }
     function clampInt(value,min,max,fallback) { const number=Number.parseInt(value,10); return Number.isFinite(number)?Math.min(max,Math.max(min,number)):fallback; }
     function escapeHtml(value) { return value.replace(/[&<>"]/g,character=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[character]); }
