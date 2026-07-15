@@ -79,7 +79,8 @@
     .frame-card.inactive { opacity:.45; background:#eeeae1; }
     .frame-card canvas { cursor:grab; }
     .frame-card.dragging { opacity:.25; }
-    .frame-card.drop-target { border-color:var(--gold); box-shadow:0 0 0 3px rgba(226,165,46,.2); }
+    .frame-card.drop-before { box-shadow:-6px 0 0 -1px var(--gold),-8px 0 16px rgba(226,165,46,.85); }
+    .frame-card.drop-after { box-shadow:6px 0 0 -1px var(--gold),8px 0 16px rgba(226,165,46,.85); }
     .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none; }
     .frame-card-info { padding:7px 8px 4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .copy-control { display:grid; grid-template-columns:34px minmax(0,1fr) 34px; align-items:center; gap:5px; padding:4px 7px 8px; }
@@ -169,7 +170,7 @@
       <div class="panel-head">
         <div>
           <div class="panel-title">3. 調整每格張數</div>
-          <div class="status" style="text-align:left">直接拖曳圖片調整順序；減到 0 會從播放與輸出移除。</div>
+          <div class="status" style="text-align:left">拖曳時依發光直線插入前方或後方；減到 0 會從播放與輸出移除。</div>
         </div>
         <div class="editor-actions">
           <button id="removeAdjacentDuplicates" class="ghost" disabled>移除相鄰重複</button>
@@ -286,7 +287,7 @@
       const canvas = event.target.closest("canvas[data-thumb-sheet]");
       if (!canvas || event.button > 0) return;
       const card = canvas.closest(".frame-card[data-sequence-key]");
-      pointerDrag = { id:event.pointerId, x:event.clientX, y:event.clientY, key:card.dataset.sequenceKey, card, targetKey:"", active:false };
+      pointerDrag = { id:event.pointerId, x:event.clientX, y:event.clientY, key:card.dataset.sequenceKey, card, targetKey:"", insertSide:"", active:false };
       canvas.setPointerCapture(event.pointerId);
     });
     frameEditor.addEventListener("pointermove", event => {
@@ -294,10 +295,15 @@
       if (Math.hypot(event.clientX-pointerDrag.x,event.clientY-pointerDrag.y) <= 8) return;
       pointerDrag.active = true;
       pointerDrag.card.classList.add("dragging");
-      frameEditor.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
+      frameEditor.querySelectorAll(".drop-before,.drop-after").forEach(item => item.classList.remove("drop-before","drop-after"));
       const target = document.elementFromPoint(event.clientX,event.clientY)?.closest(".frame-card[data-sequence-key]");
       pointerDrag.targetKey = target && target.dataset.sequenceKey !== pointerDrag.key ? target.dataset.sequenceKey : "";
-      if (pointerDrag.targetKey) target.classList.add("drop-target");
+      pointerDrag.insertSide = "";
+      if (pointerDrag.targetKey) {
+        const bounds = target.getBoundingClientRect();
+        pointerDrag.insertSide = event.clientX < bounds.left + bounds.width/2 ? "before" : "after";
+        target.classList.add(pointerDrag.insertSide === "before" ? "drop-before" : "drop-after");
+      }
     });
     document.addEventListener("pointerup", event => finishPointerDrag(event,true));
     document.addEventListener("pointercancel", event => finishPointerDrag(event,false));
@@ -385,13 +391,14 @@
       return sequenceOrder.map(item => ({sequenceItem:item,...entries.get(item.key)})).filter(item => item.sheet);
     }
 
-    function moveSequenceAfter(id,targetId) {
+    function moveSequenceTo(id,targetId,insertSide) {
       syncSequenceOrder();
       const sourceIndex = sequenceOrder.findIndex(item => item.id === id);
       if (sourceIndex < 0) return;
       const [item] = sequenceOrder.splice(sourceIndex,1);
       const targetIndex = sequenceOrder.findIndex(entry => entry.id === targetId);
-      sequenceOrder.splice(targetIndex+1,0,item);
+      const insertIndex = targetIndex + (insertSide === "after" ? 1 : 0);
+      sequenceOrder.splice(insertIndex,0,item);
       rebuild();
     }
 
@@ -448,7 +455,7 @@
         return;
       }
       frameEditor.innerHTML = entries.map(({sequenceItem,sheet,entry,sourceOrder},index) => `
-        <article class="frame-card ${sequenceItem.copies === 0 ? "inactive" : ""}" data-sequence-key="${sequenceItem.id}" title="拖到另一格上，會放到該格後面">
+        <article class="frame-card ${sequenceItem.copies === 0 ? "inactive" : ""}" data-sequence-key="${sequenceItem.id}" title="依發光直線的位置插入前方或後方">
           <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112"></canvas>
           <div class="frame-card-info" title="${escapeHtml(sheet.name)}">${index + 1}. ${escapeHtml(sheet.name)} · 格 ${sourceOrder + 1}</div>
           <div class="copy-control">
@@ -483,8 +490,8 @@
     function finishPointerDrag(event,shouldMove) {
       const drag = pointerDrag;
       pointerDrag = null;
-      frameEditor.querySelectorAll(".dragging,.drop-target").forEach(item => item.classList.remove("dragging","drop-target"));
-      if (shouldMove && drag?.active && drag.targetKey) moveSequenceAfter(drag.key,drag.targetKey);
+      frameEditor.querySelectorAll(".dragging,.drop-before,.drop-after").forEach(item => item.classList.remove("dragging","drop-before","drop-after"));
+      if (shouldMove && drag?.active && drag.targetKey) moveSequenceTo(drag.key,drag.targetKey,drag.insertSide);
     }
 
     function showMagnifier(canvas) {
