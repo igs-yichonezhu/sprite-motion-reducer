@@ -77,16 +77,16 @@
     .frame-editor { display:grid; grid-template-columns:repeat(auto-fill,minmax(112px,1fr)); gap:10px; padding:14px; }
     .frame-card { min-width:0; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:white; transition:.15s ease; }
     .frame-card.inactive { opacity:.45; background:#eeeae1; }
-    .frame-card[draggable="true"] { cursor:grab; }
+    .frame-card canvas { cursor:grab; }
     .frame-card.dragging { opacity:.25; }
     .frame-card.drop-target { border-color:var(--gold); box-shadow:0 0 0 3px rgba(226,165,46,.2); }
-    .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+    .frame-card canvas { width:100%; aspect-ratio:1; object-fit:contain; background-color:#29251f; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none; }
     .frame-card canvas:focus-visible { outline:3px solid var(--gold); outline-offset:-3px; }
     .frame-card-info { padding:7px 8px 4px; font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .copy-control { display:grid; grid-template-columns:34px minmax(0,1fr) 34px; align-items:center; gap:5px; padding:4px 7px 8px; }
     .copy-control button { padding:5px; line-height:1; font-size:18px; }
     .copy-count { text-align:center; font-weight:800; color:var(--teal); }
-    .move-control { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; padding:0 7px 8px; }
+    .move-control { display:grid; grid-template-columns:1fr; gap:5px; padding:0 7px 8px; }
     .move-control button { padding:6px 4px; font-size:11px; }
     .magnifier { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(15,13,11,.82); backdrop-filter:blur(4px); }
     .magnifier[hidden] { display:none; }
@@ -170,7 +170,7 @@
       <div class="panel-head">
         <div>
           <div class="panel-title">3. 調整每格張數</div>
-          <div class="status" style="text-align:left">減到 0 會從播放與輸出移除；增加可延長該動作的停留時間。</div>
+          <div class="status" style="text-align:left">直接拖曳圖片調整順序；減到 0 會從播放與輸出移除。</div>
         </div>
         <div class="editor-actions">
           <button id="removeAdjacentDuplicates" class="ghost" disabled>移除相鄰重複</button>
@@ -225,7 +225,7 @@
     let nextSheetId = 1;
     let nextSequenceItemId = 1;
     let sequenceOrder = [];
-    let draggedFrameKey = "";
+    let pointerDrag = null;
     let magnifyTimer = 0;
     let magnifyPointer = null;
 
@@ -268,11 +268,6 @@
     downloadJson.addEventListener("click", downloadManifest);
     clearAll.addEventListener("click", clearSheets);
     frameEditor.addEventListener("click", event => {
-      const moveButton = event.target.closest("button[data-move-delta]");
-      if (moveButton) {
-        moveSequenceItem(moveButton.dataset.sequenceKey, Number(moveButton.dataset.moveDelta));
-        return;
-      }
       const duplicateButton = event.target.closest("button[data-duplicate-sequence]");
       if (duplicateButton) {
         duplicateSequenceItem(duplicateButton.dataset.duplicateSequence);
@@ -285,32 +280,12 @@
       item.copies = clampInt(item.copies + Number(button.dataset.copyDelta), 0, 99, item.copies);
       rebuild();
     });
-    frameEditor.addEventListener("dragstart", event => {
-      const card = event.target.closest(".frame-card[data-sequence-key]");
-      if (!card) return;
-      draggedFrameKey = card.dataset.sequenceKey;
-      card.classList.add("dragging");
-      event.dataTransfer.effectAllowed = "move";
-    });
-    frameEditor.addEventListener("dragover", event => {
-      const card = event.target.closest(".frame-card[data-sequence-key]");
-      if (!card || card.dataset.sequenceKey === draggedFrameKey) return;
-      event.preventDefault();
-      frameEditor.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
-      card.classList.add("drop-target");
-    });
-    frameEditor.addEventListener("drop", event => {
-      const card = event.target.closest(".frame-card[data-sequence-key]");
-      event.preventDefault();
-      if (card && draggedFrameKey && card.dataset.sequenceKey !== draggedFrameKey) moveSequenceAfter(draggedFrameKey,card.dataset.sequenceKey);
-    });
-    frameEditor.addEventListener("dragend", () => {
-      draggedFrameKey = "";
-      frameEditor.querySelectorAll(".dragging,.drop-target").forEach(item => item.classList.remove("dragging","drop-target"));
-    });
     frameEditor.addEventListener("pointerdown", event => {
       const canvas = event.target.closest("canvas[data-thumb-sheet]");
       if (!canvas || event.button > 0) return;
+      const card = canvas.closest(".frame-card[data-sequence-key]");
+      pointerDrag = { id:event.pointerId, x:event.clientX, y:event.clientY, key:card.dataset.sequenceKey, card, targetKey:"", active:false };
+      canvas.setPointerCapture(event.pointerId);
       cancelMagnifyTimer();
       magnifyPointer = { id:event.pointerId, x:event.clientX, y:event.clientY, canvas };
       magnifyTimer = window.setTimeout(() => {
@@ -319,8 +294,15 @@
       },350);
     });
     frameEditor.addEventListener("pointermove", event => {
-      if (!magnifyPointer || magnifyPointer.id !== event.pointerId) return;
-      if (Math.hypot(event.clientX-magnifyPointer.x,event.clientY-magnifyPointer.y) > 8) cancelMagnifyTimer();
+      if (!pointerDrag || pointerDrag.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX-pointerDrag.x,event.clientY-pointerDrag.y) <= 8) return;
+      cancelMagnifyTimer();
+      pointerDrag.active = true;
+      pointerDrag.card.classList.add("dragging");
+      frameEditor.querySelectorAll(".drop-target").forEach(item => item.classList.remove("drop-target"));
+      const target = document.elementFromPoint(event.clientX,event.clientY)?.closest(".frame-card[data-sequence-key]");
+      pointerDrag.targetKey = target && target.dataset.sequenceKey !== pointerDrag.key ? target.dataset.sequenceKey : "";
+      if (pointerDrag.targetKey) target.classList.add("drop-target");
     });
     frameEditor.addEventListener("contextmenu", event => {
       if (event.target.closest("canvas[data-thumb-sheet]")) event.preventDefault();
@@ -329,8 +311,8 @@
       const canvas = event.target.closest("canvas[data-thumb-sheet]");
       if (canvas && event.key === "Enter") { event.preventDefault(); showMagnifier(canvas); }
     });
-    document.addEventListener("pointerup", closeMagnifierAfterPointer);
-    document.addEventListener("pointercancel", closeMagnifierAfterPointer);
+    document.addEventListener("pointerup", event => closeMagnifierAfterPointer(event,true));
+    document.addEventListener("pointercancel", event => closeMagnifierAfterPointer(event,false));
     document.addEventListener("keydown", event => { if (event.key === "Escape") hideMagnifier(); });
     magnifier.addEventListener("click", hideMagnifier);
     resetFrameCounts.addEventListener("click", () => {
@@ -415,16 +397,6 @@
       return sequenceOrder.map(item => ({sequenceItem:item,...entries.get(item.key)})).filter(item => item.sheet);
     }
 
-    function moveSequenceItem(id,delta) {
-      syncSequenceOrder();
-      const index = sequenceOrder.findIndex(item => item.id === id);
-      const target = Math.min(sequenceOrder.length-1,Math.max(0,index+delta));
-      if (index < 0 || index === target) return;
-      const [item] = sequenceOrder.splice(index,1);
-      sequenceOrder.splice(target,0,item);
-      rebuild();
-    }
-
     function moveSequenceAfter(id,targetId) {
       syncSequenceOrder();
       const sourceIndex = sequenceOrder.findIndex(item => item.id === id);
@@ -488,7 +460,7 @@
         return;
       }
       frameEditor.innerHTML = entries.map(({sequenceItem,sheet,entry,sourceOrder},index) => `
-        <article class="frame-card ${sequenceItem.copies === 0 ? "inactive" : ""}" draggable="true" data-sequence-key="${sequenceItem.id}" title="拖到另一格上，會放到該格後面">
+        <article class="frame-card ${sequenceItem.copies === 0 ? "inactive" : ""}" data-sequence-key="${sequenceItem.id}" title="拖到另一格上，會放到該格後面">
           <canvas data-thumb-sheet="${sheet.id}" data-thumb-slot="${entry.slot}" width="112" height="112" tabindex="0" aria-label="長按放大第 ${index + 1} 張影格"></canvas>
           <div class="frame-card-info" title="${escapeHtml(sheet.name)}">${index + 1}. ${escapeHtml(sheet.name)} · 格 ${sourceOrder + 1}</div>
           <div class="copy-control">
@@ -497,9 +469,7 @@
             <button class="ghost" data-copy-delta="1" data-sequence-id="${sequenceItem.id}" aria-label="增加第 ${index + 1} 格">＋</button>
           </div>
           <div class="move-control">
-            <button class="ghost" data-move-delta="-1" data-sequence-key="${sequenceItem.id}" ${index === 0 ? "disabled" : ""} aria-label="前移第 ${index + 1} 格">← 前移</button>
-            <button class="ghost" data-duplicate-sequence="${sequenceItem.id}" aria-label="複製第 ${index + 1} 格">複製</button>
-            <button class="ghost" data-move-delta="1" data-sequence-key="${sequenceItem.id}" ${index === entries.length - 1 ? "disabled" : ""} aria-label="後移第 ${index + 1} 格">後移 →</button>
+            <button class="ghost" data-duplicate-sequence="${sequenceItem.id}" aria-label="複製第 ${index + 1} 格">複製一張</button>
           </div>
         </article>`).join("");
       window.requestAnimationFrame(drawFrameThumbnails);
@@ -527,9 +497,13 @@
       magnifyPointer = null;
     }
 
-    function closeMagnifierAfterPointer() {
+    function closeMagnifierAfterPointer(event,shouldMove) {
+      const drag = pointerDrag;
+      pointerDrag = null;
       cancelMagnifyTimer();
       hideMagnifier();
+      frameEditor.querySelectorAll(".dragging,.drop-target").forEach(item => item.classList.remove("dragging","drop-target"));
+      if (shouldMove && drag?.active && drag.targetKey) moveSequenceAfter(drag.key,drag.targetKey);
     }
 
     function showMagnifier(canvas) {
