@@ -17,7 +17,7 @@
       background:linear-gradient(90deg,rgba(23,23,23,.035) 1px,transparent 1px),linear-gradient(rgba(23,23,23,.035) 1px,transparent 1px),var(--paper);
       background-size:28px 28px;
     }
-    button,input { font:inherit; }
+    button,input,select { font:inherit; }
     button,.button-link {
       border:1px solid var(--line); border-radius:8px; padding:10px 14px;
       background:white; color:var(--ink); font-weight:700; cursor:pointer; text-decoration:none;
@@ -56,7 +56,8 @@
     input[type="number"] { width:100%; min-width:0; padding:7px 8px; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:var(--panel); }
     .card-actions { display:flex; flex-wrap:wrap; gap:6px; }
     .card-actions button { padding:6px 9px; font-size:12px; }
-    .settings-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .settings-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    select { width:100%; min-width:0; padding:7px 8px; border:1px solid var(--line); border-radius:7px; color:var(--ink); background:var(--panel); }
     .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px; }
     .metric { padding:12px; border:1px solid var(--line); border-radius:8px; text-align:center; }
     .metric b { display:block; color:var(--teal); font-size:22px; }
@@ -136,6 +137,16 @@
           <div class="panel-head"><div class="panel-title">2. 合併設定</div><div id="outputStatus" class="status">等待影格</div></div>
           <div class="panel-body">
             <div class="settings-grid">
+              <label>整張輸出尺寸
+                <select id="outputSize">
+                  <option value="512x512">512 × 512</option>
+                  <option value="1024x1024">1024 × 1024</option>
+                  <option value="1024x512">1024 × 512</option>
+                  <option value="2048x1024">2048 × 1024</option>
+                  <option value="2048x2048" selected>2048 × 2048</option>
+                  <option value="2048x512">2048 × 512</option>
+                </select>
+              </label>
               <label>輸出欄數<input id="outputCols" type="number" min="1" max="32" value="4"></label>
               <label>播放 FPS<input id="previewFps" type="number" min="1" max="60" value="8"></label>
               <label>格子間距<input id="outputPadding" type="number" min="0" max="64" value="0"></label>
@@ -215,6 +226,7 @@
     const sheetList = $("#sheetList");
     const sourceStatus = $("#sourceStatus");
     const outputStatus = $("#outputStatus");
+    const outputSize = $("#outputSize");
     const outputCols = $("#outputCols");
     const previewFps = $("#previewFps");
     const outputPadding = $("#outputPadding");
@@ -283,7 +295,7 @@
       rebuild();
     });
 
-    [outputCols, outputPadding].forEach(input => input.addEventListener("input", rebuild));
+    [outputSize, outputCols, outputPadding].forEach(input => input.addEventListener("input", rebuild));
     previewFps.addEventListener("input", () => { updateSummary(); if (playing) startPlayback(); });
     prevFrame.addEventListener("click", () => showFrame(currentFrame - 1));
     nextFrame.addEventListener("click", () => showFrame(currentFrame + 1));
@@ -650,11 +662,17 @@
     }
 
     function atlasSettings(atlasFrames=uniqueAtlasFrames()) {
-      const crops = atlasFrames.map(cropPixels);
+      const cols=clampInt(outputCols.value,1,32,4);
+      const rows=Math.max(1,Math.ceil(atlasFrames.length/cols));
+      const [canvasWidth,canvasHeight]=outputSize.value.split("x").map(Number);
+      const requestedPadding=clampInt(outputPadding.value,0,64,0);
+      const maxHorizontalPadding=cols>1?Math.floor((canvasWidth-cols)/(cols-1)):requestedPadding;
+      const maxVerticalPadding=rows>1?Math.floor((canvasHeight-rows)/(rows-1)):requestedPadding;
+      const padding=Math.max(0,Math.min(requestedPadding,maxHorizontalPadding,maxVerticalPadding));
       return {
-        cols:clampInt(outputCols.value,1,32,4), padding:clampInt(outputPadding.value,0,64,0),
-        cellWidth:crops.length?Math.ceil(Math.max(...crops.map(crop=>crop.width))):1,
-        cellHeight:crops.length?Math.ceil(Math.max(...crops.map(crop=>crop.height))):1
+        cols,rows,padding,canvasWidth,canvasHeight,
+        cellWidth:Math.max(1,Math.floor((canvasWidth-Math.max(0,cols-1)*padding)/cols)),
+        cellHeight:Math.max(1,Math.floor((canvasHeight-Math.max(0,rows-1)*padding)/rows))
       };
     }
 
@@ -664,19 +682,21 @@
       }
       const packedFrames = uniqueAtlasFrames();
       const settings = atlasSettings(packedFrames);
-      const rows = Math.ceil(packedFrames.length/settings.cols);
-      const width = settings.cols*settings.cellWidth + Math.max(0,settings.cols-1)*settings.padding;
-      const height = rows*settings.cellHeight + Math.max(0,rows-1)*settings.padding;
-      atlasCanvas.width=width; atlasCanvas.height=height;
-      const context=atlasCanvas.getContext("2d"); context.clearRect(0,0,width,height);
+      atlasCanvas.width=settings.canvasWidth; atlasCanvas.height=settings.canvasHeight;
+      const context=atlasCanvas.getContext("2d"); context.clearRect(0,0,settings.canvasWidth,settings.canvasHeight);
       packedFrames.forEach((frame,order) => {
         const crop = cropPixels(frame);
-        const x=(order%settings.cols)*(settings.cellWidth+settings.padding)+(settings.cellWidth-crop.width)/2;
-        const y=Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding)+(settings.cellHeight-crop.height)/2;
-        context.drawImage(frame.sheet.image,frame.col*frame.width+crop.x,frame.row*frame.height+crop.y,crop.width,crop.height,x,y,crop.width,crop.height);
+        const scale=Math.min(settings.cellWidth/crop.width,settings.cellHeight/crop.height);
+        const drawWidth=crop.width*scale;
+        const drawHeight=crop.height*scale;
+        const cellX=(order%settings.cols)*(settings.cellWidth+settings.padding);
+        const cellY=Math.floor(order/settings.cols)*(settings.cellHeight+settings.padding);
+        const x=cellX+(settings.cellWidth-drawWidth)/2;
+        const y=cellY+(settings.cellHeight-drawHeight)/2;
+        context.drawImage(frame.sheet.image,frame.col*frame.width+crop.x,frame.row*frame.height+crop.y,crop.width,crop.height,x,y,drawWidth,drawHeight);
       });
-      $("#atlasInfo").textContent=`${settings.cols} 欄 × ${rows} 列 · ${width}×${height}`;
-      outputStatus.textContent=`包圖 ${packedFrames.length} 格 · 播放 ${frames.length} 格`;
+      $("#atlasInfo").textContent=`${settings.cols} 欄 × ${settings.rows} 列 · ${settings.canvasWidth}×${settings.canvasHeight}`;
+      outputStatus.textContent=`${settings.canvasWidth}×${settings.canvasHeight} · 包圖 ${packedFrames.length} 格 · 播放 ${frames.length} 格`;
     }
 
     function showFrame(index) {
@@ -759,7 +779,7 @@
       const packedFrames=uniqueAtlasFrames(); const settings=atlasSettings(packedFrames); const fps=clampInt(previewFps.value,1,60,8);
       const atlasIndexes=new Map(packedFrames.map((frame,index)=>[frame.sourceKey,index]));
       return {
-        version:2,image:"combined_sprite_sheet.png",columns:settings.cols,rows:Math.ceil(packedFrames.length/settings.cols),
+        version:2,image:"combined_sprite_sheet.png",width:settings.canvasWidth,height:settings.canvasHeight,columns:settings.cols,rows:settings.rows,
         cell_width:settings.cellWidth,cell_height:settings.cellHeight,padding:settings.padding,fps,loop:true,atlas_frames:packedFrames.length,total_frames:frames.length,
         crop:{x_ratio:cropRegion.x,y_ratio:cropRegion.y,width_ratio:cropRegion.width,height_ratio:cropRegion.height},
         sources:sheets.map(sheet=>({name:sheet.name,columns:sheet.cols,rows:sheet.rows,detected_frames:sheet.slots.length,output_frames:sequenceOrder.filter(item=>item.key.startsWith(`${sheet.id}:`)).reduce((sum,item)=>sum+item.copies,0)})),
